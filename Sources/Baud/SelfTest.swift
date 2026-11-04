@@ -51,6 +51,9 @@ enum SelfTest {
 
     private static func run(_ model: AppModel, dir: URL) async {
         var failures = 0
+        // 用 -appearance dark 启动时，可以从这一行确认保存的外观在启动时就生效
+        print("启动时外观：\(NSApp.appearance?.name.rawValue ?? "跟随系统")")
+        fflush(stdout)
 
         func wait(_ seconds: Double) async {
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
@@ -296,10 +299,33 @@ enum SelfTest {
         model.focusMode = false
         await wait(0.6)
 
-        NSApp.appearance = NSAppearance(named: .darkAqua)
+        // 外观设置不依赖系统：窗口实际外观、保存的值都要对，贴纸和日志用的动态颜色也要跟着变
+        let store = UserDefaults(suiteName: "local.summer.baud.selftest")!
+        func effective() -> NSAppearance.Name? {
+            NSApp.windows.first { $0.isVisible }?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+        }
+        func paperHex() -> String {
+            var hex = ""
+            NSApp.windows.first { $0.isVisible }?.effectiveAppearance.performAsCurrentDrawingAppearance {
+                let c = Palette.paperNS.usingColorSpace(.sRGB)
+                hex = String(format: "%02X%02X%02X", Int((c?.redComponent ?? 0) * 255 + 0.5), Int((c?.greenComponent ?? 0) * 255 + 0.5), Int((c?.blueComponent ?? 0) * 255 + 0.5))
+            }
+            return hex
+        }
+        let systemIsDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        for (choice, name, color) in [(AppearanceChoice.dark, NSAppearance.Name.darkAqua, "211915"), (.light, .aqua, "FFF8EC")] {
+            model.appearance = choice
+            await wait(0.5)
+            check(effective() == name, "选\(choice.title)后窗口是\(choice.title)")
+            check(paperHex() == color, "选\(choice.title)后配色正确：\(paperHex())")
+            check(store.string(forKey: "appearance") == choice.rawValue, "\(choice.title)已保存")
+            shot("13-appearance-\(choice.rawValue)")
+        }
+        model.appearance = .system
         await wait(0.5)
-        shot("13-dark")
-        NSApp.appearance = nil
+        check(NSApp.appearance == nil, "回到跟随系统时不再指定外观")
+        check(effective() == (systemIsDark ? .darkAqua : .aqua), "跟随系统时窗口和系统一致")
+        check(store.string(forKey: "appearance") == "system", "跟随系统已保存")
 
         func lastNote() -> LogEntry? { model.log.allEntries.last { $0.direction == .sys } }
 

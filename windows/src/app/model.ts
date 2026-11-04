@@ -3,9 +3,11 @@ import { frameBytes, hexString, isProblem, makeFrame, type LineEnding, type Outg
 import { DemoDevice } from "../core/demoDevice";
 import { LineAssembler } from "../core/lineAssembler";
 import { MultiSendModel, newItem, type SendItem } from "../core/multiSend";
+import { normalizeTheme, type ThemeChoice } from "../core/theme";
 import { LogController, noteEntry, rowEntry, type LogEntry, type ViewMode } from "./log";
 import { MoodModel } from "./mood";
 import { isNative, listPorts, openPort, saveTextFile, watchPorts, type PortInfo, type SerialConfig, type Transport } from "./native";
+import { applyTheme } from "./theme";
 
 export type LinkState = "idle" | "connecting" | "connected" | "lost";
 
@@ -77,6 +79,7 @@ export interface AppState {
   showTime: boolean;
   query: string;
   focusMode: boolean;
+  theme: ThemeChoice;
   advancedOpen: boolean;
   multiOpen: boolean;
   searchFocusTick: number;
@@ -95,7 +98,7 @@ export interface AppState {
 
 const SAVED_KEYS = [
   "selectedPort", "baudChoice", "customBaud", "dataBits", "stopBits", "parity", "flow", "encoding", "viewMode",
-  "showTime", "focusMode", "multiOpen", "sendHex", "ending", "checksum", "timerMs", "quick",
+  "showTime", "focusMode", "theme", "multiOpen", "sendHex", "ending", "checksum", "timerMs", "quick",
 ] as const;
 const STORAGE_KEY = "baud.settings";
 const MULTI_KEY = "baud.multiSend";
@@ -140,6 +143,7 @@ export class AppModel {
     showTime: true,
     query: "",
     focusMode: false,
+    theme: "system",
     advancedOpen: false,
     multiOpen: false,
     searchFocusTick: 0,
@@ -185,6 +189,8 @@ export class AppModel {
     const saved = readJson<Partial<AppState>>(STORAGE_KEY);
     if (saved) Object.assign(this.state, saved);
     this.state.checksum = { ...NO_CHECKSUM, ...this.state.checksum };
+    this.state.theme = normalizeTheme(this.state.theme);
+    applyTheme(this.state.theme);
 
     const multiSaved = readJson<{ items: SendItem[]; loop: boolean }>(MULTI_KEY);
     this.multi = new MultiSendModel(
@@ -237,6 +243,7 @@ export class AppModel {
     if (changed("input") || changed("sendHex") || changed("checksum")) {
       if (!("inputProblem" in patch)) this.state.inputProblem = null;
     }
+    if (changed("theme")) applyTheme(this.state.theme);
     if (changed("encoding")) this.log.configure({ encoding: this.state.encoding });
     if (changed("viewMode")) this.log.configure({ view: this.state.viewMode });
     if (changed("showTime")) this.log.setShowTime(this.state.showTime);

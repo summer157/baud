@@ -19,6 +19,7 @@ struct Sidebar: View {
             VStack(spacing: 0) {
                 HStack {
                     Spacer()
+                    AppearanceSwitch(selection: $model.appearance)
                     if model.focusMode {
                         // 专注模式收起她，小方块还留在这里陪你
                         ClawdView(mood: model.mood, size: 27)

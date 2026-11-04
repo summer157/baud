@@ -201,6 +201,44 @@ struct SlidingSegment<Value: Hashable>: View {
     }
 }
 
+/// 外观切换：放在侧栏顶部的一组小图标，不用改系统设置。
+struct AppearanceSwitch: View {
+    @Binding var selection: AppearanceChoice
+
+    @Namespace private var namespace
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(AppearanceChoice.allCases, id: \.self) { choice in
+                Button {
+                    Haptics.tick()
+                    withAnimation(Motion.spring) { selection = choice }
+                } label: {
+                    Image(systemName: choice.symbol)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(selection == choice ? Palette.ink : Palette.sub)
+                        .frame(width: 24, height: 20)
+                        .background {
+                            if selection == choice {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Palette.raised)
+                                    .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)
+                                    .matchedGeometryEffect(id: "pill", in: namespace)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("外观：\(choice.title)")
+                .accessibilityLabel("外观：\(choice.title)")
+                .accessibilityAddTraits(selection == choice ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Palette.ink.opacity(0.06)))
+    }
+}
+
 /// 图标按钮：悬停高亮，按下时缩小。
 struct SoftButtonStyle: ButtonStyle {
     var active = false

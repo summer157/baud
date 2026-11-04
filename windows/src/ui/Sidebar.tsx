@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { model, portTitle } from "../app/model";
 import { Clawd, StickerStage } from "./Sticker";
-import { Icon, Led, Picker, SunflowerSwitch } from "./Controls";
+import { Icon, keepFocus, Led, Picker, Segment, SunflowerSwitch } from "./Controls";
 import { useSource } from "./hooks";
 
 const BAUDS = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1500000"];
@@ -146,7 +146,19 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="brand">
+      <div className="brand" onMouseDown={keepFocus}>
+        <span className="grow" />
+        <Segment
+          compact
+          label="外观"
+          value={s.theme}
+          options={[
+            ["system", <Icon name="auto" size={12} />, "外观：跟随系统"],
+            ["light", <Icon name="sun" size={12} />, "外观：浅色"],
+            ["dark", <Icon name="night" size={12} />, "外观：深色"],
+          ]}
+          onChange={(theme) => model.set({ theme })}
+        />
         {s.focusMode && <Clawd mood={model.mood} size={27} />}
         <span>Baud</span>
       </div>

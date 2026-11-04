@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isNative, model } from "./model";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -39,6 +40,23 @@ export async function runSelfTestIfRequested() {
     const image = document.querySelector<HTMLImageElement>(".card");
     check(!!image && image.complete && image.naturalWidth > 0, `正式包里能加载贴纸，宽 ${image?.naturalWidth}`);
     check(getComputedStyle(document.body).backgroundColor !== "rgba(0, 0, 0, 0)", "内容安全策略没有挡住样式");
+
+    // 外观：点界面上的按钮，页面和原生窗口都要跟着变，不受系统设置影响
+    const win = getCurrentWindow();
+    const pick = (name: string) => document.querySelector<HTMLElement>(`[aria-label="外观：${name}"]`)!.click();
+    const paper = () => getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+    const savedTheme = () => JSON.parse(localStorage.getItem("baud.settings") ?? "{}").theme;
+    for (const [name, theme, color] of [["深色", "dark", "#211915"], ["浅色", "light", "#FFF8EC"]] as const) {
+      pick(name);
+      await wait(300);
+      check(document.documentElement.dataset.theme === theme && paper() === color, `选${name}后页面配色正确：${paper()}`);
+      check((await win.theme()) === theme, `选${name}后原生窗口也是${name}`);
+      check(savedTheme() === theme, `${name}已保存`);
+    }
+    pick("跟随系统");
+    await wait(300);
+    const systemTheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    check(document.documentElement.dataset.theme === systemTheme && (await win.theme()) === systemTheme, `回到跟随系统：${systemTheme}`);
 
     const ports = await invoke<{ path: string; name: string; kind: string }[]>("serial_ports");
     check(ports.length >= 0, `能列出系统串口：${ports.map((p) => p.name).join("、") || "无"}`);

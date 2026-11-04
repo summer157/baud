@@ -13,6 +13,9 @@ const ICONS: Record<string, ReactNode> = {
   save: <><path d="M4.6 2.6H3.4a1 1 0 0 0-1 1v9.2a1 1 0 0 0 1 1h9.2a1 1 0 0 0 1-1V3.6a1 1 0 0 0-1-1h-1.2" /><path d="M8 1.8v7.6M5.4 7 8 9.6 10.6 7" /></>,
   trash: <><path d="M2.8 4.2h10.4M6.2 4V2.6h3.6V4M4 4.2l.7 9.2h6.6l.7-9.2M6.6 6.6v4.6M9.4 6.6v4.6" /></>,
   moon: <><path d="M12.6 10A5.6 5.6 0 0 1 6 3.4 5.6 5.6 0 1 0 12.6 10z" /><path d="M10.4 2.4h3l-3 3h3" /></>,
+  sun: <><circle cx="8" cy="8" r="2.8" /><path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1 1M11.5 11.5l1 1M3.5 12.5l1-1M11.5 4.5l1-1" /></>,
+  night: <path d="M13.2 10A5.8 5.8 0 0 1 6 2.8 5.8 5.8 0 1 0 13.2 10z" />,
+  auto: <><circle cx="8" cy="8" r="5.8" /><path d="M8 2.2a5.8 5.8 0 0 1 0 11.6z" fill="currentColor" stroke="none" /></>,
   smile: <><circle cx="8" cy="8" r="6" /><path d="M5.2 9.6a3.2 3.2 0 0 0 5.6 0M5.8 6.2h.1M10.1 6.2h.1" /></>,
   plane: <path d="M14.4 1.6 1.6 7l4.8 2 2 4.8zM6.4 9l3.4-3.4" fill="currentColor" stroke="none" />,
   plus: <path d="M8 3v10M3 8h10" />,
@@ -77,12 +80,14 @@ export function SunflowerSwitch({ state, onToggle }: { state: LinkState; onToggl
 }
 
 /** 滑块会弹性移动的分段按钮。 */
-export function Segment<T extends string | boolean>({ value, options, onChange, label, disabled }: {
+export function Segment<T extends string | boolean>({ value, options, onChange, label, disabled, compact }: {
   value: T;
-  options: [T, string][];
+  /** 第三项是只放图标时的文字说明。 */
+  options: [T, ReactNode, string?][];
   onChange: (value: T) => void;
   label: string;
   disabled?: boolean;
+  compact?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [pill, setPill] = useState({ left: 2, width: 0, ready: false });
@@ -93,10 +98,10 @@ export function Segment<T extends string | boolean>({ value, options, onChange, 
   }, [value, options.length]);
 
   return (
-    <div ref={root} className={`segment${disabled ? " disabled" : ""}`} role="radiogroup" aria-label={label}>
+    <div ref={root} className={`segment${compact ? " compact" : ""}${disabled ? " disabled" : ""}`} role="radiogroup" aria-label={label}>
       <span className="segment-pill" style={{ transform: `translateX(${pill.left}px)`, width: pill.width, transition: pill.ready ? undefined : "none" }} />
-      {options.map(([option, title]) => (
-        <button key={String(option)} type="button" role="radio" aria-checked={option === value} disabled={disabled} onClick={() => onChange(option)}>
+      {options.map(([option, title, hint]) => (
+        <button key={String(option)} type="button" role="radio" aria-checked={option === value} aria-label={hint} title={hint} disabled={disabled} onClick={() => onChange(option)}>
           {title}
         </button>
       ))}

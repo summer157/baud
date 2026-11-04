@@ -4,6 +4,7 @@ import { displayText, encodeText, frameBytes, hexString, isProblem, makeFrame, p
 import { DemoDevice } from "./demoDevice";
 import { LineAssembler } from "./lineAssembler";
 import { isBlank, MultiSendModel, newItem, type MultiSendHost, type SendItem } from "./multiSend";
+import { normalizeTheme, resolveTheme } from "./theme";
 
 const bytes = (...values: number[]) => Uint8Array.from(values);
 const utf8 = (text: string) => new TextEncoder().encode(text);
@@ -263,6 +264,22 @@ describe("多条发送：循环和轮数", () => {
     strict.moveBy(items[0].id, 1);
     expect(strict.items[1].id).toBe(items[0].id);
     vi.useRealTimers();
+  });
+});
+
+describe("外观", () => {
+  it("明确选择时不受系统影响", () => {
+    expect(resolveTheme("light", true)).toBe("light");
+    expect(resolveTheme("dark", false)).toBe("dark");
+  });
+  it("跟随系统时用系统的深浅色", () => {
+    expect(resolveTheme("system", true)).toBe("dark");
+    expect(resolveTheme("system", false)).toBe("light");
+  });
+  it("认不出的保存值当作跟随系统", () => {
+    expect(normalizeTheme("dark")).toBe("dark");
+    expect(normalizeTheme("purple")).toBe("system");
+    expect(normalizeTheme(undefined)).toBe("system");
   });
 });
 

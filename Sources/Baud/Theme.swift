@@ -45,6 +45,36 @@ enum Palette {
     }
 }
 
+/// 应用自己的外观设置，可以和系统不一样。
+enum AppearanceChoice: String, CaseIterable, Hashable {
+    case system, light, dark
+
+    var title: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark: return "moon.fill"
+        }
+    }
+
+    /// 设在 NSApp 上时，SwiftUI、日志的文字视图和弹出菜单都会跟着变；nil 表示跟随系统。
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 /// 代替 `@State`。新版 SDK 里 `@State` 是宏，它的插件只随完整的 Xcode 提供，只装命令行工具时无法编译。
 @propertyWrapper
 struct Local<Value>: DynamicProperty {

@@ -103,6 +103,12 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         }
     }
     @Published var focusMode = false { didSet { defaults.set(focusMode, forKey: "focus") } }
+    @Published var appearance = AppearanceChoice.system {
+        didSet {
+            defaults.set(appearance.rawValue, forKey: "appearance")
+            NSApplication.shared.appearance = appearance.nsAppearance
+        }
+    }
     @Published var advancedOpen = false
     @Published var multiOpen = false { didSet { defaults.set(multiOpen, forKey: "multiOpen") } }
     @Published private(set) var searchFocusTick = 0
@@ -226,6 +232,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
     private func loadSettings() {
         let d = defaults
+        if let v = d.string(forKey: "appearance"), let a = AppearanceChoice(rawValue: v) { appearance = a }
         if let v = d.string(forKey: "baud") { baudChoice = v }
         if let v = d.string(forKey: "customBaud") { customBaud = v }
         if d.object(forKey: "dataBits") != nil { dataBits = d.integer(forKey: "dataBits") }
