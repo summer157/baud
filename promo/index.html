@@ -1,0 +1,862 @@
+<title>Baud 串口助手</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* 版式：一条真实的 UART 波形串起页面；短片是主角，其余内容都为它作注。配色取自 app 的 Palette。 */
+:root {
+  --paper: #FFF8EC; --panel: #FBF0DD; --raised: #FFFDF8; --ink: #4A342A; --sub: #6F5848;
+  --line: #EBDCC4; --clay: #D77757; --tx: #B0532F; --honey: #F2C36B; --shadow: rgba(74, 52, 42, .2);
+  --display: "ZCOOL KuaiLe", "Yuanti SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --word: "Fredoka", "Arial Rounded MT Bold", "PingFang SC", sans-serif;
+  --body: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #211915; --panel: #2A201A; --raised: #352921; --ink: #F3E6D6; --sub: #C8B4A0;
+  --line: #46382E; --clay: #E58B68; --tx: #F4A583; --honey: #E9B65C; --shadow: rgba(0, 0, 0, .5); color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --paper: #211915; --panel: #2A201A; --raised: #352921; --ink: #F3E6D6; --sub: #C8B4A0;
+  --line: #46382E; --clay: #E58B68; --tx: #F4A583; --honey: #E9B65C; --shadow: rgba(0, 0, 0, .5); color-scheme: dark;
+}
+body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.7; }
+.wrap { max-width: 1120px; margin-inline: auto; padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); }
+h2 { font-family: var(--display); font-weight: 400; font-size: clamp(1.7rem, 4vw, 2.3rem); line-height: 1.25; margin: 0; text-wrap: balance; }
+button { font: inherit; color: inherit; }
+button:focus-visible { outline: 2px solid var(--tx); outline-offset: 2px; }
+
+/* 开场 */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px 40px; align-items: center; padding-block: 40px 8px; }
+.wordmark { font-family: var(--word); font-weight: 600; color: var(--clay); font-size: clamp(4.4rem, 13vw, 7.6rem); line-height: .95; margin: 0; letter-spacing: -.02em; }
+.lede { font-family: var(--display); font-size: clamp(1.35rem, 3.4vw, 1.9rem); line-height: 1.35; margin: 12px 0 6px; text-wrap: balance; }
+.sublede { color: var(--sub); margin: 0; max-width: 34em; }
+.hero-card { position: relative; width: clamp(128px, 19vw, 196px); transform: rotate(3deg); margin-right: 16px; }
+.hero-card img { display: block; width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 26px; background: #fff; box-shadow: 0 8px 24px var(--shadow); }
+.hero-card .clawd-svg { position: absolute; width: 34%; right: -12%; bottom: -5%; transform: rotate(-3deg); }
+
+/* 波形 */
+.wave { padding-block: 8px 20px; }
+.wave svg { display: block; width: 100%; height: auto; overflow: visible; }
+.wave path.sig { fill: none; stroke: var(--tx); stroke-width: 2; stroke-linejoin: miter; }
+.wave text { font-family: var(--mono); font-size: 11px; fill: var(--sub); }
+.wave text.byte { font-size: 12px; font-weight: 600; fill: var(--ink); }
+.wave line { stroke: var(--line); stroke-width: 1; }
+.wave p { margin: 2px 0 0; font-size: .82rem; color: var(--sub); }
+
+/* 放映区 */
+.film { padding-bottom: 8px; }
+.frame { position: relative; overflow: hidden; border-radius: 14px; background: #FFF8EC; box-shadow: 0 0 0 1px var(--line), 0 22px 56px var(--shadow); }
+.cap { font-family: var(--display); font-size: clamp(1.08rem, 2.6vw, 1.4rem); line-height: 1.4; margin: 18px 0 10px; min-height: 2.8em; text-wrap: balance; }
+.player { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+#pp { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--clay); color: #2A1608; display: grid; place-items: center; cursor: pointer; transition: transform .18s; }
+#pp:hover { transform: scale(1.06); } #pp:active { transform: scale(.92); }
+#pp svg { width: 18px; height: 18px; fill: currentColor; }
+.chapters { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.ch { position: relative; overflow: hidden; height: 34px; border: 0; border-radius: 8px; background: var(--panel); cursor: pointer; font-size: .82rem; color: var(--sub); }
+.ch i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--honey); opacity: .55; }
+.ch b { position: relative; font-weight: 500; }
+.ch.on { color: var(--ink); } .ch.on b { font-weight: 700; }
+#clock { font-family: var(--mono); font-size: .8rem; color: var(--sub); font-variant-numeric: tabular-nums; }
+.pokehint { margin: 10px 0 0; font-size: .85rem; color: var(--sub); }
+
+/* 表情 */
+section.block { padding-block: 56px 0; }
+.block > .wrap > p.intro { color: var(--sub); margin: 8px 0 24px; max-width: 40em; }
+.moods { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 22px 14px; }
+.mood { background: none; border: 0; padding: 0; text-align: left; cursor: pointer; position: relative; }
+.mood img { display: block; width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 18px; background: #fff; box-shadow: 0 3px 10px var(--shadow); transition: transform .35s cubic-bezier(.3, 1.6, .5, 1); }
+.mood:nth-child(odd) img { transform: rotate(-1.6deg); } .mood:nth-child(even) img { transform: rotate(1.4deg); }
+.mood:hover img, .mood:focus-visible img { transform: rotate(0) translateY(-4px) scale(1.04); }
+.mood.pop img { animation: pop .45s cubic-bezier(.3, 1.6, .5, 1); }
+.mood small { display: block; margin-top: 10px; font-size: .76rem; color: var(--sub); line-height: 1.4; }
+.mood span { display: block; font-size: .92rem; font-weight: 600; line-height: 1.4; }
+
+/* 截图 */
+.shots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.shots figure { margin: 0; min-width: 0; }
+.shots img { display: block; width: 100%; height: auto; aspect-ratio: 2240 / 1520; object-fit: cover; border-radius: 10px; box-shadow: 0 0 0 1px var(--line), 0 10px 26px var(--shadow); }
+.shots figcaption { margin-top: 10px; font-size: .9rem; color: var(--sub); }
+
+/* 规格 */
+.spec { margin: 0; display: grid; grid-template-columns: 8em minmax(0, 1fr); border-top: 1px solid var(--line); }
+.spec dt, .spec dd { margin: 0; padding-block: 13px; border-bottom: 1px solid var(--line); }
+.spec dt { font-weight: 600; }
+.spec dd { color: var(--sub); min-width: 0; }
+kbd { font-family: var(--mono); font-size: .82rem; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+.keys { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+
+footer { margin-top: 64px; padding-block: 28px 44px; background: var(--panel); font-size: .85rem; color: var(--sub); }
+footer p { margin: 0 0 8px; max-width: 54em; }
+footer strong { color: var(--ink); font-weight: 600; }
+
+/* ———— 短片里的 Baud：与页面主题无关，只跟片中的白天和夜晚走 ———— */
+@property --a-paper { syntax: "<color>"; inherits: true; initial-value: #FFF8EC; }
+@property --a-panel { syntax: "<color>"; inherits: true; initial-value: #FBF0DD; }
+@property --a-raised { syntax: "<color>"; inherits: true; initial-value: #FFFDF8; }
+@property --a-ink { syntax: "<color>"; inherits: true; initial-value: #4A342A; }
+@property --a-sub { syntax: "<color>"; inherits: true; initial-value: #6F5848; }
+@property --a-line { syntax: "<color>"; inherits: true; initial-value: #EBDCC4; }
+@property --a-clay { syntax: "<color>"; inherits: true; initial-value: #D77757; }
+@property --a-tx { syntax: "<color>"; inherits: true; initial-value: #B0532F; }
+@property --a-bad { syntax: "<color>"; inherits: true; initial-value: #C9402E; }
+.app {
+  --a-paper: #FFF8EC; --a-panel: #FBF0DD; --a-raised: #FFFDF8; --a-ink: #4A342A; --a-sub: #6F5848; --a-line: #EBDCC4;
+  --a-clay: #D77757; --a-tx: #B0532F; --a-bad: #C9402E; --a-honey: #F2C36B; --a-ok: #2E8B57; --a-tint: rgba(74, 52, 42, .06);
+  position: absolute; left: 0; top: 0; width: 1120px; height: 760px; transform-origin: 0 0; display: flex; overflow: hidden;
+  background: var(--a-paper); color: var(--a-ink); font-size: 12.5px; line-height: 1.35; user-select: none; -webkit-user-select: none;
+  transition: --a-paper .8s, --a-panel .8s, --a-raised .8s, --a-ink .8s, --a-sub .8s, --a-line .8s, --a-clay .8s, --a-tx .8s, --a-bad .8s;
+}
+.app.night { --a-paper: #211915; --a-panel: #2A201A; --a-raised: #352921; --a-ink: #F3E6D6; --a-sub: #C8B4A0; --a-line: #46382E; --a-clay: #E58B68; --a-tx: #F4A583; --a-bad: #FF8A75; --a-honey: #E9B65C; --a-ok: #6FCF97; --a-tint: rgba(243, 230, 214, .07); }
+.app.instant, .app.instant * { transition: none !important; animation-duration: 0s !important; }
+.side { position: relative; flex: 0 0 257px; display: flex; flex-direction: column; background: var(--a-panel); padding: 8px 14px 12px; border-right: 1px solid var(--a-line); }
+.lights { position: absolute; left: 14px; top: 11px; display: flex; gap: 7px; }
+.lights i { width: 11px; height: 11px; border-radius: 50%; background: #E0705C; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .15); }
+.lights i:nth-child(2) { background: #E8B44E; } .lights i:nth-child(3) { background: #71B85C; }
+.brand { align-self: flex-end; font-weight: 700; font-size: 12.5px; color: var(--a-sub); height: 20px; }
+.stk { position: relative; height: 212px; flex: none; transition: height .5s cubic-bezier(.3, 1, .4, 1), opacity .3s; }
+.bubble { position: absolute; left: 50%; top: 2px; transform: translateX(-50%); white-space: nowrap; padding: 4px 13px; font-size: 13px; font-weight: 600; background: var(--a-raised); border-radius: 14px; box-shadow: 0 0 0 1px var(--a-line), 0 1px 3px rgba(74, 52, 42, .12); z-index: 3; }
+.bubble.say { animation: say .35s cubic-bezier(.3, 1.6, .5, 1); }
+.sticker { position: absolute; left: 30px; top: 42px; width: 168px; height: 168px; padding: 0; border: 0; background: #fff; border-radius: 24px; box-shadow: 0 3px 12px rgba(74, 52, 42, .18); cursor: pointer; overflow: hidden; }
+.sticker img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.sticker.pop { animation: pop .5s cubic-bezier(.3, 1.6, .5, 1); }
+.ghost { position: absolute; left: 30px; top: 42px; width: 168px; height: 168px; border-radius: 24px; background: #fff; object-fit: cover; z-index: 2; pointer-events: none; transform-origin: 90% 10%; animation: peel .42s ease-in forwards; box-shadow: 0 8px 18px rgba(74, 52, 42, .25); }
+.spark { position: absolute; left: 114px; top: 126px; z-index: 4; font-size: 17px; font-weight: 800; color: var(--a-tx); pointer-events: none; animation: spark .85s ease-out forwards; }
+.mood .spark { left: 50%; top: 40%; }
+.clawd { position: absolute; left: 172px; top: 200px; width: 58px; z-index: 5; padding: 0; border: 0; background: none; cursor: pointer; transition: left .55s cubic-bezier(.3, 1.2, .4, 1), top .55s cubic-bezier(.3, 1.2, .4, 1), width .55s; }
+.clawd svg { display: block; width: 100%; transform-origin: 50% 100%; animation: breathe var(--breath, 1.15s) ease-in-out infinite alternate; }
+.clawd-svg .sh { opacity: 0; }
+.clawd-svg .op { animation: blink 4.2s steps(1) infinite; }
+.clawd-svg .sh { animation: blink2 4.2s steps(1) infinite; }
+.clawd.asleep .op { opacity: 0; animation: none; } .clawd.asleep .sh { opacity: 1; animation: none; }
+.clawd.hop { animation: hop .55s cubic-bezier(.3, .8, .4, 1); }
+.clawd.flip { animation: flip .6s cubic-bezier(.3, 1.2, .4, 1); }
+.clawd.shake svg { animation: shake .14s linear infinite alternate; }
+.clawd.tilt { rotate: -9deg; }
+.clawd em { position: absolute; right: -6px; top: -15px; font-style: normal; font-weight: 800; font-size: 17px; color: var(--a-tx); text-shadow: 0 0 3px var(--a-paper); }
+.linkrow { display: flex; align-items: center; gap: 12px; margin-top: 8px; flex: none; }
+.switch { position: relative; flex: none; width: 90px; height: 46px; border-radius: 23px; background: var(--a-line); box-shadow: inset 0 0 0 1.25px rgba(74, 52, 42, .55); transition: background-color .35s; }
+.switch[data-s="connecting"] { background: var(--a-honey); } .switch[data-s="connected"] { background: var(--a-clay); } .switch[data-s="lost"] { background: #CF6A5C; }
+.switch b { position: absolute; top: 0; line-height: 46px; width: 46px; text-align: center; font-size: 11.5px; color: #4A342A; }
+.switch[data-s="idle"] b { right: 0; } .switch:not([data-s="idle"]) b { left: 0; color: #29170D; }
+.night .switch[data-s="idle"] b { color: #F3E6D6; }
+.flower { position: absolute; left: 4px; top: 4px; width: 38px; height: 38px; transition: transform .7s cubic-bezier(.3, 1.45, .45, 1); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .22)); }
+.flower svg { display: block; width: 100%; height: 100%; }
+.switch:not([data-s="idle"]) .flower { transform: translateX(44px) rotate(270deg); }
+.switch[data-s="connecting"] .flower svg { animation: spin .8s linear infinite; }
+.switch.pressed .flower { scale: 1.14 .86; }
+.status strong { display: block; font-size: 13px; font-weight: 600; }
+.status.bad strong { color: var(--a-bad); }
+.status span { font-family: var(--mono); font-size: 10.5px; color: var(--a-sub); }
+.fields { margin-top: 13px; display: flex; flex-direction: column; gap: 4px; }
+.flabel { font-size: 11px; color: var(--a-sub); font-weight: 500; margin-top: 7px; }
+.pick { height: 28px; display: flex; align-items: center; justify-content: space-between; padding-inline: 9px; background: var(--a-raised); border: 1px solid var(--a-line); border-radius: 8px; white-space: nowrap; overflow: hidden; }
+.pick u { text-decoration: none; color: var(--a-tx); font-size: 9px; }
+.adv { margin-top: 12px; color: var(--a-sub); font-size: 12px; }
+.quick { margin-top: 20px; }
+.quick .qh { display: flex; justify-content: space-between; font-size: 11px; color: var(--a-sub); font-weight: 500; margin-bottom: 8px; }
+.quick .q { font-family: var(--mono); font-size: 12px; padding: 6px 8px; border-radius: 6px; color: var(--a-sub); }
+.quick .q.pressed { background: var(--a-tint); color: var(--a-ink); }
+.stats { margin-top: auto; border-top: 1px solid var(--a-line); padding-top: 9px; font-family: var(--mono); font-size: 11.5px; color: var(--a-sub); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 3px 7px; align-items: center; }
+.led { width: 7px; height: 7px; border-radius: 50%; background: var(--a-line); }
+.led.hot { background: var(--a-ok); box-shadow: 0 0 5px var(--a-ok); } .led.tx.hot { background: var(--a-clay); box-shadow: 0 0 5px var(--a-clay); }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; background: var(--a-paper); }
+.tool { flex: none; height: 46px; display: flex; align-items: center; gap: 9px; padding-inline: 12px; border-bottom: 1px solid var(--a-line); white-space: nowrap; }
+.search { width: 220px; height: 28px; border-radius: 8px; background: var(--a-tint); display: flex; align-items: center; gap: 7px; padding-inline: 9px; color: var(--a-sub); font-size: 12.5px; }
+#count { color: var(--a-sub); font-size: 11.5px; font-variant-numeric: tabular-nums; margin-right: auto; }
+.lbl { font-size: 11.5px; color: var(--a-sub); }
+.seg { position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; padding: 2px; border-radius: 8px; background: var(--a-tint); }
+.seg i { position: absolute; left: 2px; top: 2px; bottom: 2px; width: calc(50% - 2px); border-radius: 6px; background: var(--a-raised); box-shadow: 0 1px 2.5px rgba(0, 0, 0, .14); transition: transform .4s cubic-bezier(.3, 1.3, .5, 1); }
+.seg.hex i { transform: translateX(100%); }
+.seg span { position: relative; padding: 4px 11px; font-size: 12px; text-align: center; color: var(--a-sub); }
+.seg:not(.hex) span:nth-of-type(1), .seg.hex span:nth-of-type(2) { color: var(--a-ink); font-weight: 600; }
+.ico { width: 28px; height: 28px; display: grid; place-items: center; color: var(--a-sub); border-radius: 7px; }
+.ico.on, .stamp { background: var(--a-tint); color: var(--a-tx); }
+.ico.pressed { scale: .9; }
+.ico svg, .stamp svg, .search svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.ico svg.solid { fill: currentColor; stroke: none; }
+.stamp { display: flex; align-items: center; gap: 5px; height: 28px; padding-inline: 9px; border-radius: 8px; font-size: 12px; font-weight: 500; }
+.banner { flex: none; height: 0; overflow: hidden; background: var(--a-panel); display: flex; align-items: center; gap: 10px; padding-inline: 14px; font-size: 12px; color: var(--a-sub); transition: height .35s cubic-bezier(.3, 1, .4, 1); }
+.banner.on { height: 34px; border-bottom: 1px solid var(--a-line); }
+.banner b { color: var(--a-bad); }
+.plug { margin-left: auto; padding: 2px 7px; border-radius: 5px; background: var(--a-raised); box-shadow: 0 0 0 1px var(--a-line); color: var(--a-ink); font-size: 11.5px; }
+.plug.pressed { scale: .94; }
+.logbox { position: relative; flex: 1; min-height: 0; }
+.log { position: absolute; inset: 0; overflow: hidden; padding: 14px 18px; font-family: var(--mono); font-size: 13px; line-height: 19px; }
+.row { overflow-wrap: anywhere; }
+.row .ts { color: var(--a-sub); margin-right: 14px; }
+.row .dir { color: var(--a-sub); display: inline-block; width: 12px; margin-right: 13px; }
+.row.note { font-family: var(--body); color: var(--a-sub); margin-block: 2px 5px; }
+.row.note .ts { font-family: var(--mono); } .row.tx, .row.tx .dir { color: var(--a-tx); }
+.row.err, .row.err .dir { color: var(--a-bad); font-family: var(--body); } .row.err .ts { font-family: var(--mono); }
+.empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; color: var(--a-sub); font-family: var(--body); }
+.empty b { display: block; font-size: 14.5px; }
+.thumb { position: absolute; right: 2px; top: 92%; width: 5px; height: 26px; border-radius: 3px; background: rgba(120, 90, 70, .45); transition: top .5s; opacity: 0; }
+.thumb.on { opacity: 1; } .thumb.up { top: 72%; }
+.jump { position: absolute; left: 50%; bottom: 14px; translate: -50% 12px; opacity: 0; display: flex; align-items: center; gap: 6px; padding: 6px 13px; border-radius: 15px; background: var(--a-raised); box-shadow: 0 2px 10px rgba(0, 0, 0, .2); font-size: 12.5px; font-family: var(--body); transition: translate .35s cubic-bezier(.3, 1.5, .5, 1), opacity .2s; }
+.jump.on { translate: -50% 0; opacity: 1; } .jump.pressed { scale: .94; }
+.plane { position: absolute; right: 90px; bottom: 80px; width: 18px; height: 18px; fill: var(--a-clay); opacity: 0; pointer-events: none; }
+.plane.fly { animation: fly .9s cubic-bezier(.3, .6, .4, 1); }
+.composer { flex: none; margin: 0 12px 12px; padding: 9px 7px 7px; border-radius: 12px; background: var(--a-raised); box-shadow: 0 0 0 1.25px var(--a-line); transition: box-shadow .2s; }
+.composer.focus { box-shadow: 0 0 0 1.25px var(--a-clay); }
+.composer.err { box-shadow: 0 0 0 1.5px var(--a-bad); }
+.composer.err.shakeit { animation: shake2 .32s linear; }
+.input { padding: 2px 7px; height: 28px; font-size: 13px; font-family: var(--mono); color: var(--a-ink); display: flex; align-items: center; }
+.input.ph { font-family: var(--body); color: var(--a-sub); opacity: .85; }
+.caret { display: inline-block; width: 1.3px; height: 15px; margin-left: 1px; background: var(--a-tx); animation: caret 1s steps(1) infinite; }
+.cbar { display: flex; align-items: center; gap: 8px; margin-top: 4px; white-space: nowrap; }
+.cbar .pick { width: 78px; font-size: 12.5px; }
+.cbar .pick.off { opacity: .4; }
+.timer { display: flex; align-items: center; gap: 7px; height: 28px; padding-inline: 8px; border-radius: 8px; background: var(--a-tint); color: var(--a-sub); font-size: 12px; }
+.timer span { opacity: .55; }
+.timer tt { font-family: var(--mono); color: var(--a-ink); }
+#hint { margin-left: auto; color: var(--a-sub); font-size: 11.5px; }
+#hint.bad { color: var(--a-bad); }
+.send { height: 28px; padding-inline: 13px; display: flex; align-items: center; gap: 5px; border-radius: 8px; background: var(--a-clay); color: #29170D; font-size: 12px; font-weight: 600; opacity: .4; transition: opacity .15s, scale .15s; }
+.send.ok { opacity: 1; } .send.pressed { scale: .94; }
+.send svg { width: 11px; height: 11px; fill: currentColor; }
+.cursor { position: absolute; left: 0; top: 0; z-index: 20; width: 22px; height: 22px; pointer-events: none; opacity: 0; transition: transform .75s cubic-bezier(.3, .7, .2, 1), opacity .25s; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .35)); }
+.cursor.on { opacity: 1; }
+.cursor svg { display: block; width: 100%; height: 100%; transition: scale .12s; transform-origin: 3px 3px; }
+.cursor.down svg { scale: .8; }
+.ripple { position: absolute; z-index: 19; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; border: 2px solid var(--a-clay); pointer-events: none; animation: ripple .5s ease-out forwards; }
+.card { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; background: var(--a-paper); opacity: 0; pointer-events: none; transition: opacity .9s; }
+.card.on { opacity: 1; pointer-events: auto; }
+.card img { width: 196px; height: 196px; object-fit: cover; border-radius: 28px; background: #fff; rotate: -3deg; box-shadow: 0 6px 22px rgba(0, 0, 0, .22); }
+.card h3 { margin: 12px 0 0; font-family: var(--word); font-weight: 600; font-size: 72px; line-height: 1; color: var(--a-clay); }
+.card p { margin: 0; font-family: var(--display); font-size: 24px; color: var(--a-ink); }
+
+/* 手机上的短片：把同一个界面重新排成竖版，字才看得清 */
+.app.narrow { width: 440px; height: 640px; flex-direction: column; }
+.narrow .side { flex: none; display: grid; grid-template-columns: 136px minmax(0, 1fr); grid-template-rows: auto auto auto; column-gap: 14px; border-right: 0; border-bottom: 1px solid var(--a-line); padding: 8px 14px 10px; align-items: start; }
+.narrow .lights { display: none; }
+.narrow .brand { grid-column: 2; grid-row: 1; }
+.narrow .stk { grid-column: 1; grid-row: 1 / span 3; height: 130px; }
+.narrow .sticker, .narrow .ghost { left: 0; top: 6px; width: 124px; height: 124px; border-radius: 19px; }
+.narrow .spark { left: 60px; top: 60px; }
+.narrow .bubble { position: fixed; left: 150px; top: 34px; transform: none; font-size: 12.5px; }
+.narrow .linkrow { grid-column: 2; grid-row: 3; margin-top: 34px; }
+.narrow .clawd { left: 104px; top: 98px; width: 44px; }
+.narrow .fields, .narrow .adv, .narrow .quick { display: none; }
+.narrow .stats { grid-column: 2; grid-row: 4; margin-top: 8px; border-top: 0; padding-top: 0; font-size: 10.5px; }
+.narrow .stk { grid-row: 1 / span 4; }
+.narrow .search, .narrow .lbl, .narrow .stamp, .narrow .tdiv, .narrow .ico:not(.keep), .narrow .timer, .narrow #hint.idle { display: none; }
+.narrow .log { padding: 10px 12px; font-size: 12px; line-height: 17.5px; }
+.narrow .row .ts { margin-right: 8px; } .narrow .row .dir { margin-right: 7px; }
+.narrow #hint { font-size: 10.5px; white-space: normal; word-break: keep-all; text-align: right; }
+.narrow .cbar .pick { width: 70px; }
+.narrow .send { margin-left: auto; }
+.narrow #hint.bad + .send { margin-left: 0; }
+.narrow .card img { width: 150px; height: 150px; }
+.narrow .card h3 { font-size: 58px; }
+.narrow .card p { font-size: 20px; }
+.narrow.focus .stk { height: 0; opacity: 0; }
+.narrow.focus .side { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
+.narrow.focus .brand, .narrow.focus .linkrow, .narrow.focus .stats { grid-column: 1; }
+.narrow.focus .linkrow { margin-top: 2px; }
+.narrow.focus .clawd { left: 340px; top: 4px; width: 32px; }
+.focus .stk { height: 0; opacity: 0; pointer-events: none; }
+.focus .clawd { left: 172px; top: 5px; width: 32px; }
+
+@keyframes pop { 0% { transform: scale(.82) rotate(-3deg); } 100% { transform: none; } }
+@keyframes say { 0% { scale: .7; opacity: 0; } 100% { scale: 1; opacity: 1; } }
+@keyframes peel { 0% { transform: none; opacity: 1; } 100% { transform: translate(34px, -26px) rotate(14deg); opacity: 0; } }
+@keyframes spark { 0% { translate: 0 0; scale: .4; opacity: 0; } 25% { opacity: 1; scale: 1.1; } 100% { translate: var(--dx) var(--dy); scale: .8; opacity: 0; } }
+@keyframes breathe { from { transform: none; } to { transform: scale(1.035, .94); } }
+@keyframes blink { 0%, 96% { opacity: 1; } 97%, 100% { opacity: 0; } }
+@keyframes blink2 { 0%, 96% { opacity: 0; } 97%, 100% { opacity: 1; } }
+@keyframes hop { 0% { transform: none; } 12% { transform: scale(1.16, .8); transform-origin: 50% 100%; } 42% { transform: translateY(-24px) scale(.92, 1.12); } 72% { transform: none; } 84% { transform: scale(1.12, .86); } 100% { transform: none; } }
+@keyframes flip { to { rotate: 360deg; } }
+@keyframes shake { from { transform: translateX(-3px); } to { transform: translateX(3px); } }
+@keyframes shake2 { 0%, 100% { translate: 0; } 25% { translate: -5px; } 75% { translate: 5px; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fly { 0% { opacity: 0; transform: translate(70px, 56px) rotate(-8deg); } 20% { opacity: 1; } 100% { opacity: 0; transform: translate(-60px, -90px) rotate(10deg); } }
+@keyframes ripple { from { scale: .3; opacity: .9; } to { scale: 1.3; opacity: 0; } }
+@keyframes caret { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+
+@media (max-width: 760px) {
+  .moods { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .shots { grid-template-columns: minmax(0, 1fr); }
+  .spec { grid-template-columns: minmax(0, 1fr); }
+  .spec dt { border-bottom: 0; padding-block: 13px 0; }
+  .spec dd { padding-top: 2px; }
+  .chapters { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #clock { display: none; }
+  .player { grid-template-columns: auto minmax(0, 1fr); }
+  .hero { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding-block: 24px 4px; }
+  .cap { min-height: 4.2em; }
+}
+@media (max-width: 480px) { .hero-card { width: 104px; margin-right: 10px; } }
+@media (prefers-reduced-motion: reduce) {
+  .mood img, .mood.pop img { transition: none; animation: none; }
+  .clawd svg, .clawd-svg .op, .clawd-svg .sh { animation: none; }
+}
+</style>
+
+<header class="wrap hero">
+  <div>
+    <h1 class="wordmark">Baud</h1>
+    <p class="lede">一个会陪你看日志的 Mac 串口助手</p>
+    <p class="sublede">连接、收发、HEX、断线重连，该有的都有。旁边还住着一个跟着串口变表情的看板娘，和一只能戳的小方块 Clawd。</p>
+  </div>
+  <div class="hero-card" id="heroCard"><img src="stickers/r3c1.png" alt="看板娘挥手打招呼" width="276" height="261"></div>
+</header>
+
+<div class="wrap wave">
+  <div id="wave" aria-hidden="true"></div>
+  <p>这条线是 “Baud” 四个字母按 8N1 发送时的真实波形：起始位拉低，数据位低位在前，停止位拉高。</p>
+</div>
+
+<section class="wrap film" aria-label="Baud 使用过程短片">
+  <div class="frame" id="frame" role="img" aria-label="动画短片：看板娘从门后探头，向日葵开关连接串口，发送 AT+GMR 收到回复，切换 HEX，高速数据滚动，拔线后自动重连，最后进入深色模式。">
+    <div class="app" id="app" aria-hidden="true"></div>
+  </div>
+  <p class="cap" id="cap"></p>
+  <div class="player">
+    <button id="pp" type="button" aria-label="暂停"></button>
+    <div class="chapters" id="chapters"></div>
+    <span id="clock">0:00 / 1:00</span>
+  </div>
+  <p class="pokehint">片子里的看板娘和 Clawd 都能戳，连戳几下她会生气。</p>
+</section>
+
+<section class="block"><div class="wrap">
+  <h2>她的表情跟着串口走</h2>
+  <p class="intro">每个表情都对应 app 里一个真实的状态，台词也是 app 里的原话。点一下试试。</p>
+  <div class="moods" id="moods"></div>
+</div></section>
+
+<section class="block"><div class="wrap">
+  <h2>真实截图</h2>
+  <p class="intro">上面的短片是照着 app 搭的动画，这几张直接截自 Baud。日志内容都来自内置的演示设备。</p>
+  <div class="shots">
+    <figure><img src="shots/connected.jpg" alt="Baud 已连接，刚发送 AT+GMR，看板娘的贴纸正在翻页换表情" loading="lazy" width="1500" height="1018"><figcaption>发送指令的瞬间，贴纸正翻到下一张。</figcaption></figure>
+    <figure><img src="shots/dark.jpg" alt="Baud 的深色模式，棕色背景上滚动着大量 data 日志" loading="lazy" width="1500" height="1018"><figcaption>深色模式。高速数据刚停，已经收了 2.99 MB。</figcaption></figure>
+    <figure><img src="shots/hex.jpg" alt="Baud 用 HEX 显示日志，发送的行以橘色标出" loading="lazy" width="1500" height="1018"><figcaption>HEX 视图，发送和接收用颜色和箭头分开。</figcaption></figure>
+    <figure><img src="shots/lost.jpg" alt="Baud 显示设备已断开，看板娘露出惊讶的表情" loading="lazy" width="1500" height="1018"><figcaption>设备断开后，界面提示会在插回时自动重连。</figcaption></figure>
+  </div>
+</div></section>
+
+<section class="block"><div class="wrap">
+  <h2>写给会用串口的朋友</h2>
+  <p class="intro">可爱归可爱，它首先是个能干活的工具。</p>
+  <dl class="spec">
+    <dt>串口参数</dt><dd>波特率 9600 到 1500000，也可以自定义；数据位 5 到 8，停止位 1 或 2，奇偶校验，RTS/CTS 和 XON/XOFF 流控。</dd>
+    <dt>收发</dt><dd>文本和 HEX 都能发，也都能看。可选换行符，可按毫秒定时发送，↑ 翻出上一条，常用指令存成快捷指令。文本编码支持 UTF-8 和 GBK。</dd>
+    <dt>日志</dt><dd>时间戳、搜索、暂停、清屏、保存。往上翻历史时不会被新数据拉走，点“回到最新”再回来。</dd>
+    <dt>断线</dt><dd>设备拔掉后保留当前配置，插回去自动重连。</dd>
+    <dt>没有设备时</dt><dd>内置一个演示设备，能回复 AT 指令，也能模拟高速数据和拔线。</dd>
+    <dt>底子</dt><dd>原生 SwiftUI 和 AppKit，完全离线，App 约 8 MB，需要 macOS 14 以上，目前是 Apple 芯片版本。</dd>
+    <dt>快捷键</dt><dd class="keys"><span><kbd>⌘K</kbd> 连接</span><span><kbd>⌘F</kbd> 查找</span><span><kbd>⇧⌘P</kbd> 暂停</span><span><kbd>⌘L</kbd> 清屏</span><span><kbd>⌘S</kbd> 保存</span><span><kbd>⇧⌘F</kbd> 专注模式</span></dd>
+  </dl>
+</div></section>
+
+<footer><div class="wrap">
+  <p><strong>这是一页介绍，不提供下载。</strong>Baud 是 Summer 和 Claude 一起做的私人小工具，目前主要在内置演示设备上测试，真实硬件的实测还在路上。</p>
+  <p>看板娘贴纸来自 ai-girl-stickers 项目中的 Claude 角色投稿，版权归原作者，这里仅作非商业展示。Baud 是个人作品，与 Anthropic 没有官方关系。</p>
+</div></footer>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (s, root) => (root || document).querySelector(s);
+
+  /* ———— 共用的小素材 ———— */
+  const rect = (x, y, w, h) => `M${x} ${y}h${w}v${h}h${-w}Z`;
+  const clawdShape = [rect(1.5, 0, 10, 6.2), rect(0, 2, 1.5, 2), rect(11.5, 2, 1.5, 2), ...[2.6, 4.6, 7.2, 9.2].map(x => rect(x, 6.2, 1.2, 2.3))].join("");
+  const clawdSVG = `<svg class="clawd-svg" viewBox="-1 -1 15 11" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="${clawdShape}" fill="none" stroke="#fff" stroke-width="1" stroke-linejoin="round"/>
+    <path d="${clawdShape}" fill="none" stroke="#4A2B1C" stroke-opacity=".85" stroke-width=".36" stroke-linejoin="round"/>
+    <path d="${clawdShape}" fill="#D77757"/>
+    <path class="op" d="${rect(3.8, 1.6, 1.2, 2.4)}${rect(8, 1.6, 1.2, 2.4)}" fill="#291A14"/>
+    <path class="sh" d="${rect(3.6, 2.7, 1.6, .45)}${rect(7.8, 2.7, 1.6, .45)}" fill="#291A14"/></svg>`;
+  const flowerSVG = (() => {
+    let petals = "";
+    for (let i = 0; i < 16; i++) petals += `<path transform="rotate(${i * 22.5})" d="M0-4.75C3.8-9.5 2.85-15.2 0-19C-2.85-15.2-3.8-9.5 0-4.75Z" fill="${i % 2 ? "#F2A14F" : "#E0782E"}" stroke="#8F4017" stroke-width=".8"/>`;
+    return `<svg viewBox="-19.5 -19.5 39 39" aria-hidden="true">${petals}<circle r="6.5" fill="#6B2E14"/><circle r="4" fill="#A6521F"/></svg>`;
+  })();
+  const ICON = {
+    search: '<svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>',
+    clock: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.4"/></svg>',
+    pause: '<svg class="solid" viewBox="0 0 16 16"><rect x="4" y="3" width="3" height="10" rx=".7"/><rect x="9" y="3" width="3" height="10" rx=".7"/></svg>',
+    save: '<svg viewBox="0 0 16 16"><path d="M8 2v8m-3-3 3 3 3-3M3 10v3a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3"/></svg>',
+    trash: '<svg viewBox="0 0 16 16"><path d="M3 4h10M6 4V2.5h4V4m-5.5 0 .6 9.5h5.8l.6-9.5M7 6.5v5m2-5v5"/></svg>',
+    moon: '<svg viewBox="0 0 16 16"><path d="M9 4a5.5 5.5 0 1 0 4.5 7.5A5.5 5.5 0 0 1 9 4ZM11 2h3l-3 3h3"/></svg>',
+    smile: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M5.5 9.5c1.2 1.6 3.8 1.6 5 0M6 6.2v.6m4-.6v.6"/></svg>',
+    repeat: '<svg viewBox="0 0 16 16"><path d="M3 7V6a2 2 0 0 1 2-2h7m-2-2 2 2-2 2m3 3v1a2 2 0 0 1-2 2H4m2 2-2-2 2-2"/></svg>',
+    plane: '<svg viewBox="0 0 16 16"><path d="M15 1 1 6.8l5 1.9L14 2 8 9.4l1.9 5Z"/></svg>'
+  };
+  const MOOD = {
+    peek: ["r3c5", "端口……还没连哦。"], wait: ["r2c6", "不急，喝口咖啡。"], link: ["r3c1", "连上啦！", "★"], read: ["r2c3", "我看着呢。"],
+    send: ["r1c1", "送出去了～", "♥"], hex: ["r1c5", "这个……不是成对的吧？", "?"], flood: ["r3c3", "好、好多数据！", "✦"], unplug: ["r1c6", "诶？！线呢？！", "!"],
+    fail: ["r1c4", "连不上，哼！", "✖"], doze: ["r2c1", "zzz……"], shy: ["r4c6", "别、别戳了……", "♥"], annoyed: ["r4c4", "再戳我要生气了。"]
+  };
+  const CLAWD_SYMBOL = { unplug: "!", fail: "!", hex: "?", doze: "z", link: "♪", send: "♪", shy: "♪" };
+  const src = name => `stickers/${name}.png`;
+  Object.values(MOOD).forEach(m => { const i = new Image(); i.src = src(m[0]); });
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  $("#heroCard").insertAdjacentHTML("beforeend", clawdSVG);
+
+  /* ———— 短片的界面 ———— */
+  const app = $("#app");
+  app.innerHTML = `
+    <aside class="side">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="brand">Baud</div>
+      <div class="stk">
+        <div class="bubble" id="bubble"></div>
+        <button class="sticker" id="sticker" tabindex="-1"><img id="stickerImg" alt=""></button>
+      </div>
+      <button class="clawd" id="clawd" tabindex="-1">${clawdSVG}<em id="clawdSym"></em></button>
+      <div class="linkrow">
+        <div class="switch" id="switch" data-s="idle"><b id="swText">连接</b><div class="flower">${flowerSVG}</div></div>
+        <div class="status" id="status"><strong id="stText">未连接</strong><span>115200 8N1</span></div>
+      </div>
+      <div class="fields">
+        <div class="flabel">端口</div><div class="pick"><span id="port"></span><u>⇅</u></div>
+        <div class="flabel">波特率</div><div class="pick"><span>115200</span><u>⇅</u></div>
+      </div>
+      <div class="adv">›&nbsp; 高级设置</div>
+      <div class="quick"><div class="qh"><span>快捷指令</span><span>＋</span></div>
+        <div class="q">AT</div><div class="q">AT+GMR</div><div class="q" id="qStatus">status</div><div class="q">reset</div></div>
+      <div class="stats">
+        <i class="led" id="ledRx"></i><span>RX <span id="rx">0 B</span></span><span id="rate"></span>
+        <i class="led tx" id="ledTx"></i><span>TX <span id="tx">0 B</span></span><span></span>
+      </div>
+    </aside>
+    <div class="main">
+      <div class="tool">
+        <div class="search">${ICON.search}搜索日志</div><span id="count">0 行</span>
+        <span class="lbl">显示</span><div class="seg" id="viewSeg"><i></i><span>文本</span><span id="viewHex">HEX</span></div>
+        <div class="stamp">${ICON.clock}时间戳</div>
+        <div class="ico">${ICON.pause}</div><div class="ico">${ICON.save}</div><div class="ico">${ICON.trash}</div>
+        <div class="ico keep" id="focusBtn"></div>
+      </div>
+      <div class="banner" id="banner"><b>设备已断开</b><span>插回后会自动重连</span><span class="plug" id="plug">模拟插回</span></div>
+      <div class="logbox" id="logbox">
+        <div class="log" id="log"></div>
+        <div class="empty" id="empty"><div><b>还没有数据</b>选择端口，然后拨动向日葵</div></div>
+        <i class="thumb" id="thumb"></i>
+        <div class="jump" id="jump">↓ 回到最新</div>
+        <svg class="plane" id="plane" viewBox="0 0 16 16"><path d="M15 1 1 6.8l5 1.9L14 2 8 9.4l1.9 5Z"/></svg>
+      </div>
+      <div class="composer" id="composer">
+        <div class="input" id="input"></div>
+        <div class="cbar">
+          <span class="lbl">发送</span><div class="seg" id="sendSeg"><i></i><span>文本</span><span id="sendHex">HEX</span></div>
+          <div class="pick" id="eol"><span>CRLF</span><u>⇅</u></div>
+          <div class="timer">${ICON.repeat}<span>定时</span><tt>1000</tt> ms</div>
+          <span id="hint"></span>
+          <div class="send" id="send">发送 ${ICON.plane}</div>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="card"><img src="stickers/r3c1.png" alt=""><h3>Baud</h3><p>一个会陪你看日志的 Mac 串口助手</p></div>
+    <div class="cursor" id="cursor"><svg viewBox="0 0 22 22"><path d="M3 2v15l4-3.6 2.6 6 3-1.3-2.6-5.9h5.4Z" fill="#fff" stroke="#29170D" stroke-width="1.3" stroke-linejoin="round"/></svg></div>`;
+  const ui = {};
+  ["bubble", "sticker", "stickerImg", "clawd", "clawdSym", "switch", "swText", "status", "stText", "port", "qStatus", "ledRx", "ledTx", "rx", "tx", "rate", "count", "viewSeg", "viewHex", "focusBtn", "banner", "plug", "logbox", "log", "empty", "thumb", "jump", "plane", "composer", "input", "sendSeg", "sendHex", "eol", "hint", "send", "card", "cursor"]
+    .forEach(id => { ui[id] = $("#" + id, app); });
+
+  /* ———— 片中状态：任何时刻都能由 reset + 按时间重放得到，所以可以随意跳章节 ———— */
+  const LINK = {
+    idle: ["连接", "未连接"], connecting: ["取消", "正在连接"], connected: ["断开", "已连接"], lost: ["停止", "等待设备…"]
+  };
+  const CONFIG = "演示设备 · 115200 8N1";
+  const LINE_RATE = 11000, FLOOD_STEP = 1 / 30;
+  const enc = new TextEncoder();
+  const byteLen = t => enc.encode(t).length + 2;
+  const prng = i => { const x = Math.sin(i * 12.9898 + 4.1) * 43758.5453; return x - Math.floor(x); };
+  let S;
+  function fresh() {
+    return { t: 0, link: "idle", mood: "peek", night: false, focus: false, view: "text", sendMode: "text", hexErr: false,
+      input: "", caret: false, lines: [], total: 0, rx: 0, txb: 0, rate: 0, rxAt: -9, txAt: -9,
+      tel: false, telNext: 0, tick: 0, seq: 128, flood: false, floodNext: 0, frozen: null, banner: false, card: false,
+      cur: null, press: null, sym: null };
+  }
+  const stamp = t => {
+    const ms = Math.round(42936 + t * 1000), s = Math.floor(ms / 1000);
+    return `11:${46 + Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
+  };
+  let logDirty = true;
+  function push(kind, text, t) {
+    S.lines.push({ kind, text, ts: stamp(t === undefined ? S.t : t) });
+    if (S.lines.length > 70) S.lines.splice(0, S.lines.length - 70);
+    if (kind === "rx" || kind === "tx") S.total++;
+    logDirty = true;
+  }
+  function rxLine(text) { push("rx", text); S.rx += byteLen(text); S.rxAt = S.t; }
+  function txLine(text) { push("tx", text); S.txb += byteLen(text); S.txAt = S.t; }
+  function boot() { ["boot: firmware v2.4.1", "boot: flash ok, 4096 KB", "wifi: connected, ip 192.168.1.42", "状态: 运行正常"].forEach(rxLine); S.rate = 142; }
+  function telemetry() {
+    const i = ++S.tick;
+    if (i % 13 === 0) rxLine("状态: 运行正常");
+    else if (i % 11 === 0) rxLine(`wifi: rssi=-${52 + i % 9} dBm`);
+    else if (i % 5 === 0) rxLine(`heartbeat seq=${++S.seq}`);
+    else rxLine(`sensor temp=${(24.4 + prng(i) * .6).toFixed(1)}C hum=${47 + Math.floor(prng(i + 50) * 3)}% vbat=${(3.69 + prng(i + 90) * .03).toFixed(2)}V`);
+    S.rate = 50 + Math.floor(prng(i + 7) * 90);
+    S.telNext += .65;
+  }
+  function floodStep() {
+    const n = Math.round(LINE_RATE * FLOOD_STEP), show = Math.min(n, 44);
+    for (let k = n - show; k < n; k++) {
+      const q = S.seq + k + 1;
+      push("rx", `data seq=${q} adc=[${q % 4096}, ${q * 7 % 4096}, ${q * 13 % 4096}] ok`, S.t - (n - k) / LINE_RATE);
+    }
+    S.seq += n; S.total += n - show; S.rx += n * 52; S.rxAt = S.t;
+    S.rate = 566900 + Math.floor(prng(Math.floor(S.t * 30)) * 9000 - 4500);
+    S.floodNext += FLOOD_STEP;
+  }
+  const press = sel => { S.press = sel; effects.push(["press", sel]); };
+  const cur = sel => { S.cur = sel; };
+  const typeOut = (t0, text, gap) => [...text].map((c, i) => [t0 + i * gap, () => { S.input += c; }]);
+  let effects = [];
+
+  const CH = [
+    { t: 0, name: "打开", cap: "打开时她躲在门后，探头告诉你端口还没连。" },
+    { t: 5, name: "连接", cap: "拨一下向日葵，花转起来。连上以后，她也跟着开心。" },
+    { t: 12, name: "发送", cap: "回车就发，↑ 翻出上一条。常用指令存成快捷指令，点一下就发。" },
+    { t: 21, name: "HEX", cap: "收发都能切到 HEX。少打半个字节，她会先替你拦下来。" },
+    { t: 29, name: "高速", cap: "数据灌进来照样跟得上。往上翻就停在原地，点“回到最新”再回来。" },
+    { t: 38, name: "拔线", cap: "线松了也不用重新配置。插回去，自己就连上了。" },
+    { t: 46, name: "夜里", cap: "深色模式是一间开着台灯的可可色房间。想专心看日志，就把她收起来，只留 Clawd 在标题栏。" }
+  ];
+  const END = 60;
+  const TL = [
+    [2.7, () => cur("#switch")],
+    [5, () => { press("#switch"); S.link = "connecting"; S.mood = "wait"; }],
+    [6.1, () => { S.link = "connected"; S.mood = "link"; push("note", `已连接 ${CONFIG}`); boot(); S.tel = true; S.telNext = S.t + .25; }],
+    [8.6, () => { S.mood = "read"; }],
+    [12, () => cur("#input")],
+    [12.8, () => { press("#input"); S.caret = true; }],
+    ...typeOut(13.2, "AT+GMR", .16),
+    [14.6, () => cur("#send")],
+    [15.5, () => { press("#send"); effects.push(["plane"]); txLine(S.input); S.input = ""; S.caret = false; S.mood = "send"; }],
+    [15.6, () => { rxLine("v2.4.1"); rxLine("OK"); }],
+    [16.9, () => { S.mood = "read"; }],
+    [17.2, () => cur("#qStatus")],
+    [18.3, () => { press("#qStatus"); effects.push(["plane"]); txLine("status"); S.mood = "send"; }],
+    [18.4, () => { rxLine("状态: 运行正常"); rxLine("uptime 01:24:36"); rxLine("OK"); }],
+    [19.7, () => { S.mood = "read"; }],
+    [21, () => cur("#viewHex")],
+    [21.9, () => { press("#viewHex"); S.view = "hex"; logDirty = true; }],
+    [23.4, () => cur("#sendHex")],
+    [24.2, () => { press("#sendHex"); S.sendMode = "hex"; }],
+    [24.4, () => { S.caret = true; }],
+    ...typeOut(24.6, "ABC", .2),
+    [25.4, () => cur("#send")],
+    [26.2, () => { press("#send"); S.hexErr = true; S.mood = "hex"; effects.push(["shake"]); }],
+    [28.3, () => { S.hexErr = false; S.input = ""; S.caret = false; S.sendMode = "text"; S.view = "text"; S.mood = "read"; logDirty = true; cur(null); }],
+    [29.4, () => { S.tel = false; S.flood = true; S.floodNext = S.t; S.mood = "flood"; }],
+    [32.6, () => cur("#logbox")],
+    [33.5, () => { S.frozen = S.lines.slice(-44); logDirty = true; effects.push(["scrollUp"]); }],
+    [35.2, () => cur("#jump")],
+    [36.2, () => { press("#jump"); S.frozen = null; logDirty = true; }],
+    [37.5, () => { S.flood = false; S.tel = true; S.telNext = S.t + .4; S.rate = 96800; }],
+    [37.9, () => { S.rate = 60; S.mood = "read"; cur(null); }],
+    [38.6, () => { S.link = "lost"; S.tel = false; S.rate = 0; S.mood = "unplug"; S.banner = true; push("err", "设备意外断开 演示设备，插回后会自动重连"); }],
+    [41.4, () => cur("#plug")],
+    [42.7, () => { press("#plug"); S.banner = false; S.link = "connected"; S.mood = "link"; push("note", `已自动重连 ${CONFIG}`); boot(); S.tel = true; S.telNext = S.t + .25; }],
+    [44.5, () => { S.mood = "read"; cur(null); }],
+    [46.4, () => { S.night = true; }],
+    [49.3, () => cur("#focusBtn")],
+    [50.2, () => { press("#focusBtn"); S.focus = true; }],
+    [53.2, () => { press("#focusBtn"); S.focus = false; }],
+    [55, () => { cur(null); S.card = true; }]
+  ].sort((a, b) => a[0] - b[0]);
+
+  let nextEvent = 0;
+  function advance(to) {
+    for (;;) {
+      const candidates = [nextEvent < TL.length ? TL[nextEvent][0] : Infinity, S.tel ? S.telNext : Infinity, S.flood ? S.floodNext : Infinity];
+      const next = Math.min(...candidates);
+      if (next > to) break;
+      S.t = next;
+      if (next === candidates[0]) TL[nextEvent++][1]();
+      else if (next === candidates[1]) telemetry();
+      else floodStep();
+    }
+    S.t = to;
+  }
+
+  /* ———— 把状态画到界面上 ———— */
+  const fmtBytes = n => n < 1000 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(1)} KB` : `${(n / 1e6).toFixed(2)} MB`;
+  const fmtRate = n => !n ? "" : n < 1000 ? `${n} B/s` : `${(n / 1e3).toFixed(1)} KB/s`;
+  // 显示层只留最近约两万行，所以高速时行数在 2 万上下来回，和 app 一致
+  const fmtCount = n => (n > 22000 ? 20000 + (n - 20000) % 2000 : n).toLocaleString("en-US") + " 行";
+  const toHex = text => [...enc.encode(text), 13, 10].map(b => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
+  const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const DIR = { rx: "←", tx: "→", note: "·", err: "!" };
+
+  function renderLog(instant) {
+    const lines = S.frozen || S.lines.slice(-44);
+    ui.empty.hidden = S.lines.length > 0;
+    ui.log.innerHTML = lines.map(l => {
+      const body = S.view === "hex" && (l.kind === "rx" || l.kind === "tx") ? toHex(l.text) : esc(l.text);
+      return `<div class="row ${l.kind}"><span class="ts">${l.ts}</span><span class="dir">${DIR[l.kind]}</span>${body}</div>`;
+    }).join("");
+    if (!S.frozen) ui.log.scrollTop = ui.log.scrollHeight;
+    else if (instant) ui.log.scrollTop = Math.max(0, ui.log.scrollHeight - ui.log.clientHeight - 150);
+    const over = ui.log.scrollHeight > ui.log.clientHeight + 4;
+    ui.thumb.classList.toggle("on", over);
+    ui.thumb.classList.toggle("up", !!S.frozen);
+    logDirty = false;
+  }
+
+  let shownMood = null, flashMood = null, flashTimer = 0, shownSym = null;
+  function showMood(name, animate) {
+    const m = MOOD[name];
+    if (animate && shownMood && !reduced) {
+      const ghost = document.createElement("img");
+      ghost.className = "ghost"; ghost.src = ui.stickerImg.src; ghost.alt = "";
+      ui.sticker.parentNode.appendChild(ghost);
+      ghost.addEventListener("animationend", () => ghost.remove());
+      restart(ui.sticker, "pop");
+      restart(ui.bubble, "say");
+      if (m[2]) burst(ui.sticker.parentNode, m[2]);
+      if (["link", "send", "shy", "flood"].includes(name)) restart(ui.clawd, "hop");
+    }
+    ui.stickerImg.src = src(m[0]);
+    ui.bubble.textContent = m[1];
+    shownMood = name;
+    ui.clawd.classList.toggle("asleep", name === "doze");
+    ui.clawd.classList.toggle("shake", ["unplug", "fail"].includes(name) && !reduced);
+    ui.clawd.classList.toggle("tilt", name === "hex");
+    ui.clawd.style.setProperty("--breath", name === "flood" ? ".16s" : name === "doze" ? "2.2s" : name === "read" ? ".7s" : "1.15s");
+    setSym(CLAWD_SYMBOL[name] || "");
+  }
+  function setSym(s) { if (s !== shownSym) { ui.clawdSym.textContent = s; shownSym = s; } }
+  function restart(el, cls) { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+  function burst(host, sym) {
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + .4, r = 70 + (i % 3) * 16, sp = document.createElement("span");
+      sp.className = "spark"; sp.textContent = sym;
+      sp.style.setProperty("--dx", Math.cos(a) * r + "px");
+      sp.style.setProperty("--dy", Math.sin(a) * r + "px");
+      sp.addEventListener("animationend", () => sp.remove());
+      host.appendChild(sp);
+    }
+  }
+
+  let scale = 1, curPlaced = null, narrow = false;
+  function placeCursor(force) {
+    if (!S.cur) { ui.cursor.classList.remove("on"); curPlaced = null; return; }
+    if (S.cur === curPlaced && !force) return;
+    const el = $(S.cur, app), box = el && el.getBoundingClientRect(), base = app.getBoundingClientRect();
+    if (!box || !box.width) return;
+    const x = (box.left - base.left) / scale + box.width / scale / 2, y = (box.top - base.top) / scale + box.height / scale / 2;
+    ui.cursor.style.transform = `translate(${x - 3}px, ${y - 3}px)`;
+    ui.cursor.classList.add("on");
+    curPlaced = S.cur;
+  }
+
+  function render(instant) {
+    const moodNow = flashMood || S.mood;
+    if (moodNow !== shownMood) showMood(moodNow, !instant);
+    app.classList.toggle("night", S.night);
+    app.classList.toggle("focus", S.focus);
+    ui.switch.dataset.s = S.link;
+    ui.swText.textContent = LINK[S.link][0];
+    ui.stText.textContent = LINK[S.link][1];
+    ui.status.classList.toggle("bad", S.link === "lost");
+    ui.port.textContent = S.link === "lost" ? "演示设备（未找到）" : "演示设备 · 内置模拟，无需硬件";
+    ui.rx.textContent = fmtBytes(S.rx);
+    ui.tx.textContent = fmtBytes(S.txb);
+    ui.rate.textContent = fmtRate(S.rate);
+    ui.count.textContent = fmtCount(S.total);
+    ui.ledRx.classList.toggle("hot", S.t - S.rxAt < .14);
+    ui.ledTx.classList.toggle("hot", S.t - S.txAt < .25);
+    ui.viewSeg.classList.toggle("hex", S.view === "hex");
+    ui.sendSeg.classList.toggle("hex", S.sendMode === "hex");
+    ui.eol.classList.toggle("off", S.sendMode === "hex");
+    ui.banner.classList.toggle("on", S.banner);
+    ui.jump.classList.toggle("on", !!S.frozen);
+    ui.card.classList.toggle("on", S.card);
+    ui.focusBtn.innerHTML = S.focus ? ICON.smile : ICON.moon;
+    ui.focusBtn.classList.toggle("on", S.focus);
+    const ready = S.link === "connected";
+    const inputHTML = S.input ? esc(S.input) + (S.caret ? '<i class="caret"></i>' : "") : (S.caret ? '<i class="caret"></i>' : (ready ? "输入要发送的内容" : "连接后即可发送"));
+    if (ui.input.dataset.v !== inputHTML) { ui.input.innerHTML = inputHTML; ui.input.dataset.v = inputHTML; }
+    ui.input.classList.toggle("ph", !S.input && !S.caret);
+    ui.composer.classList.toggle("focus", S.caret && !S.hexErr);
+    ui.composer.classList.toggle("err", S.hexErr);
+    ui.hint.textContent = S.hexErr ? "HEX 需要成对的 0-9、A-F" : "↩ 发送  ↑ 上一条";
+    ui.hint.classList.toggle("bad", S.hexErr);
+    ui.hint.classList.toggle("idle", !S.hexErr);
+    ui.send.classList.toggle("ok", !!S.input);
+    if (logDirty) renderLog(instant);
+    placeCursor();
+    effects.forEach(([kind, arg]) => { if (!instant) runEffect(kind, arg); });
+    effects = [];
+  }
+  function runEffect(kind, arg) {
+    if (kind === "press") {
+      const el = $(arg, app); if (!el) return;
+      el.classList.add("pressed"); setTimeout(() => el.classList.remove("pressed"), 170);
+      if (S.cur === arg && curPlaced === arg) {
+        ui.cursor.classList.add("down"); setTimeout(() => ui.cursor.classList.remove("down"), 150);
+        const box = el.getBoundingClientRect(), base = app.getBoundingClientRect(), r = document.createElement("i");
+        r.className = "ripple";
+        r.style.left = (box.left - base.left + box.width / 2) / scale + "px";
+        r.style.top = (box.top - base.top + box.height / 2) / scale + "px";
+        r.addEventListener("animationend", () => r.remove());
+        app.appendChild(r);
+      }
+    } else if (kind === "plane") restart(ui.plane, "fly");
+    else if (kind === "shake") restart(ui.composer, "shakeit");
+    else if (kind === "scrollUp") ui.log.scrollTo({ top: Math.max(0, ui.log.scrollHeight - ui.log.clientHeight - 150), behavior: reduced ? "auto" : "smooth" });
+  }
+
+  /* ———— 放映控制 ———— */
+  const PLAY = '<svg viewBox="0 0 16 16"><path d="M4 2.2v11.6a.6.6 0 0 0 .9.5l9.3-5.8a.6.6 0 0 0 0-1L4.9 1.7a.6.6 0 0 0-.9.5Z"/></svg>';
+  const PAUSE = '<svg viewBox="0 0 16 16"><rect x="3.5" y="2.5" width="3.2" height="11" rx=".8"/><rect x="9.3" y="2.5" width="3.2" height="11" rx=".8"/></svg>';
+  const REPLAY = '<svg viewBox="0 0 16 16"><path d="M8 2.5a5.5 5.5 0 1 1-5.2 3.7l1.5.5A4 4 0 1 0 8 4v2.4L4.2 3.4 8 .4Z"/></svg>';
+  const pp = $("#pp"), capEl = $("#cap"), clockEl = $("#clock"), chapEl = $("#chapters");
+  const chBtns = CH.map((c, i) => {
+    const b = document.createElement("button");
+    b.className = "ch"; b.type = "button"; b.innerHTML = `<i></i><b>${c.name}</b>`;
+    b.setAttribute("aria-label", `跳到第 ${i + 1} 段：${c.name}`);
+    b.addEventListener("click", () => { seek(c.t); setPlaying(true); });
+    chapEl.appendChild(b);
+    return b;
+  });
+  let playing = false, autoPaused = false, last = 0, curCh = -1;
+  const mmss = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+  function syncPlayer() {
+    let idx = 0;
+    CH.forEach((c, i) => { if (S.t >= c.t) idx = i; });
+    if (idx !== curCh) { curCh = idx; capEl.textContent = CH[idx].cap; }
+    chBtns.forEach((b, i) => {
+      const a = CH[i].t, z = i + 1 < CH.length ? CH[i + 1].t : END;
+      b.firstChild.style.width = Math.min(100, Math.max(0, (S.t - a) / (z - a) * 100)) + "%";
+      b.classList.toggle("on", i === idx);
+    });
+    clockEl.textContent = `${mmss(S.t)} / ${mmss(END)}`;
+  }
+  function setPlaying(v) {
+    playing = v;
+    autoPaused = false;
+    last = performance.now();
+    pp.innerHTML = v ? PAUSE : S.t >= END ? REPLAY : PLAY;
+    pp.setAttribute("aria-label", v ? "暂停" : S.t >= END ? "重播" : "播放");
+    app.style.animationPlayState = v ? "" : "paused";
+  }
+  function seek(t) {
+    S = fresh();
+    nextEvent = 0; effects = []; logDirty = true; curPlaced = null;
+    flashMood = null; clearTimeout(flashTimer);
+    app.classList.add("instant");
+    advance(t);
+    render(true);
+    placeCursor(true);
+    void app.offsetWidth;
+    app.classList.remove("instant");
+    syncPlayer();
+  }
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (!playing) return;
+    const dt = Math.min((now - last) / 1000, .12);
+    last = now;
+    const to = Math.min(S.t + dt, END);
+    advance(to);
+    render(false);
+    syncPlayer();
+    if (to >= END) setPlaying(false);
+  }
+  pp.addEventListener("click", () => {
+    if (S.t >= END) { seek(0); setPlaying(true); } else setPlaying(!playing);
+  });
+
+  /* 戳她 */
+  let pokes = 0, pokeReset = 0;
+  function pokeSticker() {
+    pokes++;
+    clearTimeout(pokeReset); pokeReset = setTimeout(() => { pokes = 0; }, 2000);
+    flashMood = pokes >= 3 ? "annoyed" : "shy";
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { flashMood = null; render(false); }, 1800);
+    render(false);
+  }
+  let clawdPokes = 0, symTimer = 0;
+  function pokeClawd(ev) {
+    ev.stopPropagation();
+    clawdPokes++;
+    restart(ui.clawd, clawdPokes % 5 ? "hop" : "flip");
+    ui.clawdSym.textContent = "!"; shownSym = "!";
+    clearTimeout(symTimer);
+    symTimer = setTimeout(() => setSym(CLAWD_SYMBOL[flashMood || S.mood] || ""), 700);
+  }
+  ui.sticker.addEventListener("click", pokeSticker);
+  ui.clawd.addEventListener("click", pokeClawd);
+
+  /* 尺寸：手机上换竖版排布，避免整个窗口被缩得看不清 */
+  const frameEl = $("#frame");
+  function fit() {
+    const w = frameEl.clientWidth, n = w < 640, W = n ? 440 : 1120, H = n ? 640 : 760;
+    if (n !== narrow) { narrow = n; app.classList.toggle("narrow", n); }
+    scale = w / W;
+    app.style.transform = `scale(${scale})`;
+    frameEl.style.height = H * scale + "px";
+    if (S) { ui.log.scrollTop = S.frozen ? ui.log.scrollTop : ui.log.scrollHeight; placeCursor(true); }
+  }
+  fit();
+  new ResizeObserver(fit).observe(frameEl);
+  seek(0);
+  requestAnimationFrame(frame);
+
+  /* 滚出视野时暂停，滚回来接着放 */
+  new IntersectionObserver(([e]) => {
+    if (!e.isIntersecting && playing) { setPlaying(false); autoPaused = true; }
+    else if (e.isIntersecting && autoPaused) setPlaying(true);
+  }, { threshold: .35 }).observe(frameEl);
+  if (reduced) { seek(16); setPlaying(false); } else setPlaying(true);
+
+  /* ———— 表情墙 ———— */
+  const WHEN = [["peek", "还没连接"], ["wait", "正在连接，或安静了一阵"], ["link", "连上的时候"], ["read", "数据正在进来"], ["send", "发送成功"], ["hex", "HEX 打错了"],
+    ["flood", "超过 30 KB/s"], ["unplug", "线被拔掉"], ["fail", "连接失败"], ["doze", "安静了三分钟"], ["shy", "被戳"], ["annoyed", "连戳三下"]];
+  const moods = $("#moods");
+  WHEN.forEach(([k, when]) => {
+    const m = MOOD[k], b = document.createElement("button");
+    b.className = "mood"; b.type = "button";
+    b.innerHTML = `<img src="${src(m[0])}" alt="" loading="lazy" width="276" height="261"><small>${when}</small><span>${m[1]}</span>`;
+    b.addEventListener("click", () => { if (!reduced) { restart(b, "pop"); if (m[2]) burst(b, m[2]); } });
+    moods.appendChild(b);
+  });
+
+  /* ———— 波形：按字节真实算出来，宽度变化时重画 ———— */
+  const waveEl = $("#wave");
+  let walker = null;
+  function drawWave() {
+    const w = waveEl.clientWidth, h = 66, hi = 16, lo = 44, bytes = [..."Baud"];
+    const cell = w / (bytes.length * 10 + (bytes.length + 1) * 1.5);
+    let x = 0, d = `M0 ${hi}`, marks = "", level = 1;
+    const seg = (bit, cells) => {
+      if (bit !== level) { d += `V${bit ? hi : lo}`; level = bit; }
+      x += cell * cells; d += `H${x.toFixed(1)}`;
+    };
+    bytes.forEach(ch => {
+      seg(1, 1.5);
+      const code = ch.charCodeAt(0), start = x;
+      const seq = [0, ...Array.from({ length: 8 }, (_, i) => code >> i & 1), 1];
+      seq.forEach((bit, i) => {
+        if (cell >= 11 && i > 0 && i < 9) marks += `<text x="${(x + cell / 2).toFixed(1)}" y="11" text-anchor="middle" opacity=".7">${bit}</text>`;
+        seg(bit, 1);
+      });
+      marks += `<text class="byte" x="${start.toFixed(1)}" y="${h - 4}">${ch}</text><text x="${(start + 14).toFixed(1)}" y="${h - 4}">0x${code.toString(16).toUpperCase()}</text>`;
+    });
+    seg(1, 1.5);
+    waveEl.innerHTML = `<svg viewBox="0 -18 ${w} ${h + 18}" width="${w}" height="${h + 18}"><path class="sig" d="${d}"/>${marks}<g id="walker" transform="translate(-100 0)">${clawdSVG.replace('class="clawd-svg"', 'class="clawd-svg" x="-13" y="-19" width="26" height="20"')}</g></svg>`;
+    walker = { path: $("path.sig", waveEl), g: $("#walker", waveEl), len: 0 };
+    walker.len = walker.path.getTotalLength();
+    placeWalker(reduced ? .04 : (performance.now() / 26000) % 1);
+  }
+  function placeWalker(p) {
+    if (!walker) return;
+    const pt = walker.path.getPointAtLength(p * walker.len);
+    walker.g.setAttribute("transform", `translate(${pt.x.toFixed(1)} ${pt.y.toFixed(1)})`);
+  }
+  drawWave();
+  new ResizeObserver(drawWave).observe(waveEl);
+  if (!reduced) (function walk(now) { placeWalker((now / 26000) % 1); requestAnimationFrame(walk); })(performance.now());
+})();
+</script>

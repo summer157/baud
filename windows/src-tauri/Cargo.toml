@@ -1,0 +1,25 @@
+[package]
+name = "baud"
+version = "1.0.0"
+description = "一个会陪你看日志的串口助手"
+edition = "2021"
+
+[lib]
+name = "baud_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serialport = { version = "4", default-features = false }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

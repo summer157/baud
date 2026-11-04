@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Baud",
+  "version": "1.0.0",
+  "identifier": "local.summer.baud.tauri",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:5183",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Baud",
+        "width": 1120,
+        "height": 760,
+        "minWidth": 900,
+        "minHeight": 640,
+        "center": true,
+        "dragDropEnabled": false,
+        "backgroundThrottling": "disabled",
+        "backgroundColor": "#FFF8EC"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "app"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "category": "DeveloperTool",
+    "shortDescription": "一个会陪你看日志的串口助手",
+    "copyright": "看板娘贴纸版权归原作者（ai-girl-stickers）",
+    "windows": {
+      "nsis": { "languages": ["SimpChinese"], "installMode": "currentUser" }
+    }
+  }
+}

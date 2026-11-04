@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Baud 看板娘试玩</title>
+<style>
+:root {
+  --paper: #FFF8EC; --panel: #FBF0DD; --ink: #4A342A; --sub: #75604F; --line: #EBDCC4;
+  --clay: #D77757; --clay-deep: #B85F42; --honey: #F2C36B; --card: #FFFFFF;
+  --spring: linear(0, .009, .035 2.1%, .141, .281 6.7%, .723 12.9%, .938 16.7%, 1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%, .991, .977 51%, .974 53.8%, .975 57.1%, .997 69.8%, 1.003 76.9%, 1.004 83.8%, 1);
+  --snap: cubic-bezier(.2, .9, .25, 1);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Rounded", "PingFang SC", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--clay-deep); outline-offset: 2px; }
+
+.app { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: 100vh; }
+.stage {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 32px 24px;
+  overflow: hidden; perspective: 900px;
+  background-image: radial-gradient(#E9D9BE 1.1px, transparent 1.2px); background-size: 20px 20px;
+}
+
+/* 贴纸 */
+.sticker-wrap { position: relative; width: min(380px, 70vw); aspect-ratio: 1; touch-action: none; user-select: none; }
+.sticker {
+  position: absolute; inset: 0; padding: 0; border: 0; border-radius: 34px; background: var(--card); cursor: grab;
+  box-shadow: 0 0 0 7px #fff, 0 3px 6px rgba(92,60,30,.12), 0 18px 40px rgba(92,60,30,.2);
+  transform: translate(var(--dx, 0px), var(--dy, 0px)) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) scale(var(--sx, 1), var(--sy, 1));
+  transform-style: preserve-3d; will-change: transform;
+}
+.sticker.dragging { cursor: grabbing; }
+.sticker img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 34px; pointer-events: none; -webkit-user-drag: none; }
+.glare {
+  position: absolute; inset: 0; border-radius: 34px; pointer-events: none; opacity: var(--glare, 0); mix-blend-mode: soft-light;
+  background: radial-gradient(circle at var(--gx, 50%) var(--gy, 50%), rgba(255,255,255,.95), rgba(255,255,255,0) 58%);
+}
+.sticker.in { animation: stickerIn .62s var(--spring) both; }
+.ghost { position: absolute; inset: 0; border-radius: 34px; overflow: hidden; background: #fff; pointer-events: none; box-shadow: 0 0 0 7px #fff, 0 12px 28px rgba(92,60,30,.2); animation: stickerOut .3s cubic-bezier(.5,0,.8,.4) forwards; transform-origin: 90% 10%; }
+.ghost img { display: block; width: 100%; height: 100%; object-fit: contain; }
+@keyframes stickerIn { from { opacity: 0; transform: translateY(26px) rotate(-7deg) scale(.72, .66); } 35% { opacity: 1; } to { opacity: 1; transform: none; } }
+@keyframes stickerOut { to { opacity: 0; transform: translate(70px, -60px) rotate(16deg) scale(.82); } }
+
+.bubble {
+  max-width: 340px; min-height: 42px; padding: 9px 18px; border-radius: 20px; background: #fff; border: 1.5px solid var(--line);
+  text-align: center; font-weight: 600; box-shadow: 0 4px 12px rgba(92,60,30,.08);
+}
+.bubble.in { animation: bubbleIn .5s var(--spring) both; }
+@keyframes bubbleIn { from { opacity: 0; transform: translateY(10px) scale(.86); } to { opacity: 1; transform: none; } }
+
+/* 向日葵开关 */
+.switch-row { display: flex; align-items: center; gap: 14px; font-weight: 600; }
+.switch {
+  position: relative; width: 132px; height: 62px; padding: 0; border: 2px solid var(--ink); border-radius: 31px; background: #EFE3CF;
+  transition: background .42s var(--snap), box-shadow .42s var(--snap); overflow: visible;
+}
+.switch:active .knob { --press: .9; --stretch: 1.14; }
+.switch[aria-checked="true"] { background: var(--clay); box-shadow: 0 6px 20px rgba(215,119,87,.45); }
+.knob {
+  position: absolute; left: 3px; top: 3px; width: 52px; height: 52px; --press: 1; --stretch: 1;
+  transform: translateX(0) scale(var(--stretch), var(--press));
+  transition: transform .72s var(--spring);
+}
+.switch[aria-checked="true"] .knob { transform: translateX(70px) scale(var(--stretch), var(--press)); }
+.knob svg { display: block; width: 100%; height: 100%; overflow: visible; transition: transform .9s var(--spring); filter: drop-shadow(0 2px 3px rgba(74,52,42,.3)); }
+.switch[aria-checked="true"] .knob svg { transform: rotate(270deg); }
+.petals { transform-origin: center; transform-box: fill-box; transform: scale(.72); transition: transform .7s var(--spring); }
+.switch[aria-checked="true"] .petals { transform: scale(1.14); }
+.switch.busy .knob svg { animation: busy 1s linear infinite; }
+@keyframes busy { to { transform: rotate(360deg); } }
+.switch-state { min-width: 70px; }
+
+/* 飘出的小符号 */
+.fx { position: absolute; left: 0; top: 0; pointer-events: none; font-size: 26px; font-weight: 800; will-change: transform, opacity; }
+
+/* 右侧面板 */
+.panel { display: flex; flex-direction: column; gap: 14px; padding: 28px 20px; background: var(--panel); border-left: 1.5px solid var(--line); overflow-y: auto; }
+.panel h1 { margin: 0; font-size: 19px; }
+.panel h2 { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--sub); }
+.panel p { margin: 0; color: var(--sub); font-size: 13px; }
+.events { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ev {
+  min-height: 42px; padding: 6px 10px; border: 1.5px solid var(--line); border-radius: 13px; background: #FFFDF8; font-size: 13px; font-weight: 600;
+  transition: transform .4s var(--spring), border-color .16s ease, background .16s ease;
+}
+.ev:hover { transform: translateY(-2px); border-color: var(--clay); }
+.ev:active { transform: scale(.94); transition-duration: .06s; }
+.ev.on { background: #FBE3D3; border-color: var(--clay); }
+.sheet { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+.thumb { aspect-ratio: 1; padding: 0; border: 1.5px solid var(--line); border-radius: 9px; overflow: hidden; background: #fff; transition: transform .4s var(--spring), border-color .15s ease; }
+.thumb:hover { transform: scale(1.22); border-color: var(--clay); position: relative; z-index: 1; }
+.thumb:active { transform: scale(.92); transition-duration: .06s; }
+.thumb.on { border-color: var(--clay); box-shadow: 0 0 0 2px var(--clay); }
+.thumb img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+
+@media (max-width: 800px) { .app { grid-template-columns: 1fr; } .panel { border-left: 0; border-top: 1.5px solid var(--line); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <main class="stage" id="stage">
+    <div class="bubble" id="bubble" role="status">……</div>
+    <div class="sticker-wrap" id="wrap">
+      <button class="sticker" id="sticker" aria-label="戳戳看板娘"><img id="face" alt="" src="stickers/r1c3.png"><span class="glare"></span></button>
+    </div>
+    <div class="switch-row">
+      <span>串口</span>
+      <button class="switch" id="sw" role="switch" aria-checked="false" aria-label="连接串口">
+        <span class="knob">
+          <svg viewBox="-60 -60 120 120" aria-hidden="true">
+            <g class="petals" id="petals"></g>
+            <circle r="17" fill="#6B2F14" stroke="#3E1A0A" stroke-width="3"></circle>
+            <circle r="8" fill="#A6521F"></circle>
+          </svg>
+        </span>
+      </button>
+      <span class="switch-state" id="swState">未连接</span>
+    </div>
+  </main>
+  <aside class="panel">
+    <h1>Baud 看板娘</h1>
+    <p>拖动她、移动鼠标、戳一戳，或者拨动向日葵开关。</p>
+    <h2>串口事件</h2>
+    <div class="events" id="events"></div>
+    <h2>全部 24 个表情</h2>
+    <div class="sheet" id="sheet"></div>
+  </aside>
+</div>
+
+<script>
+const EVENTS = {
+  cool:    { label: '高冷待机', img: 'r1c3', say: '……有事吗？' },
+  peek:    { label: '未连接',   img: 'r3c5', say: '端口……还没选哦。' },
+  link:    { label: '连接成功', img: 'r3c1', say: '连上啦！', fx: '★' },
+  read:    { label: '收到数据', img: 'r2c3', say: '我看着呢。' },
+  flood:   { label: '数据刷屏', img: 'r3c3', say: '好、好多数据！', fx: '✦' },
+  wait:    { label: '等待数据', img: 'r2c6', say: '不急，喝口咖啡。' },
+  send:    { label: '发送成功', img: 'r1c1', say: '送出去了～', fx: '♥' },
+  hex:     { label: 'HEX 输错', img: 'r1c5', say: '这个……不是成对的吧？', fx: '?' },
+  unplug:  { label: '设备拔出', img: 'r1c6', say: '诶？！线呢？！', fx: '!' },
+  fail:    { label: '连接失败', img: 'r1c4', say: '端口被占用了啦！', fx: '✖' },
+  failx:   { label: '一直失败', img: 'r2c2', say: '呜呜，还是连不上……' },
+  doze:    { label: '长时间空闲', img: 'r2c1', say: 'zzz……', fx: 'z' },
+  tired:   { label: '日志太长', img: 'r3c2', say: '看不完了……' },
+  shy:     { label: '被戳了',   img: 'r4c6', say: '别、别戳了……', fx: '♥' },
+};
+const POKES = ['shy', 'send', 'fail'];
+
+const $ = (id) => document.getElementById(id);
+const sticker = $('sticker'), face = $('face'), wrap = $('wrap'), bubble = $('bubble'), stage = $('stage');
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let current = null, baseEvent = 'peek', linked = false;
+
+/* 向日葵花瓣 */
+const NS = 'http://www.w3.org/2000/svg';
+for (let i = 0; i < 16; i++) {
+  const p = document.createElementNS(NS, 'path');
+  p.setAttribute('d', 'M0 -14 C10 -28 8 -44 0 -56 C-8 -44 -10 -28 0 -14Z');
+  p.setAttribute('fill', i % 2 ? '#F2A050' : '#E0782F');
+  p.setAttribute('stroke', '#8E3F18');
+  p.setAttribute('stroke-width', '2.5');
+  p.setAttribute('transform', `rotate(${i * 22.5})`);
+  $('petals').appendChild(p);
+}
+
+/* 换表情：旧贴纸被揭走，新贴纸弹上来 */
+function setImage(name) {
+  if (face.dataset.name === name) return;
+  if (face.dataset.name && !reduced) {
+    const ghost = document.createElement('div');
+    ghost.className = 'ghost';
+    const img = new Image();
+    img.src = face.src;
+    ghost.appendChild(img);
+    wrap.appendChild(ghost);
+    // 页面在后台时动画可能不推进，用定时器兜底，保证旧贴纸一定被移除
+    setTimeout(() => ghost.remove(), 340);
+  }
+  face.src = `stickers/${name}.png`;
+  face.dataset.name = name;
+  sticker.classList.remove('in');
+  void sticker.offsetWidth;
+  sticker.classList.add('in');
+  document.querySelectorAll('.thumb').forEach((t) => t.classList.toggle('on', t.dataset.name === name));
+}
+function say(text) {
+  bubble.textContent = text;
+  bubble.classList.remove('in');
+  void bubble.offsetWidth;
+  bubble.classList.add('in');
+}
+function trigger(id, opts) {
+  const ev = EVENTS[id];
+  current = id;
+  setImage(ev.img);
+  say(ev.say);
+  if (ev.fx) burst(ev.fx);
+  document.querySelectorAll('.ev').forEach((b) => b.classList.toggle('on', b.dataset.id === id));
+  if (!opts || !opts.transient) baseEvent = id;
+}
+
+/* 飘散的小符号，只用 transform 和 opacity */
+function burst(ch) {
+  if (reduced) return;
+  const r = wrap.getBoundingClientRect(), s = stage.getBoundingClientRect();
+  const colors = { '♥': '#F2858A', '★': '#EFAE3C', '✦': '#EFAE3C', '?': '#D9722C', '!': '#E2453C', '✖': '#E2453C', z: '#75604F' };
+  for (let i = 0; i < 7; i++) {
+    const el = document.createElement('span');
+    el.className = 'fx';
+    el.textContent = ch;
+    el.style.color = colors[ch] || '#D77757';
+    stage.appendChild(el);
+    const a = -Math.PI / 2 + (i - 3) * .46;
+    const x0 = r.left - s.left + r.width / 2 + Math.cos(a) * r.width * .42;
+    const y0 = r.top - s.top + r.height / 2 + Math.sin(a) * r.height * .42;
+    const d = 56 + Math.random() * 50;
+    el.animate([
+      { transform: `translate(${x0}px, ${y0}px) scale(.2) rotate(-25deg)`, opacity: 0 },
+      { transform: `translate(${x0 + Math.cos(a) * d * .7}px, ${y0 + Math.sin(a) * d * .7}px) scale(1.15) rotate(8deg)`, opacity: 1, offset: .35 },
+      { transform: `translate(${x0 + Math.cos(a) * d}px, ${y0 + Math.sin(a) * d - 20}px) scale(.8) rotate(16deg)`, opacity: 0 },
+    ], { duration: 780 + Math.random() * 240, easing: 'cubic-bezier(.2,.8,.3,1)', delay: i * 22, fill: 'both' }).onfinish = () => el.remove();
+  }
+}
+
+/* 弹簧：倾斜、挤压和拖动都走同一套物理，可随时打断 */
+const spring = {
+  dx: { v: 0, x: 0, t: 0 }, dy: { v: 0, x: 0, t: 0 },
+  rx: { v: 0, x: 0, t: 0 }, ry: { v: 0, x: 0, t: 0 },
+  sx: { v: 0, x: 1, t: 1 }, sy: { v: 0, x: 1, t: 1 },
+  glare: { v: 0, x: 0, t: 0 },
+};
+const K = { dx: [170, 15], dy: [170, 15], rx: [240, 18], ry: [240, 18], sx: [520, 19], sy: [520, 19], glare: [120, 20] };
+let last = performance.now(), running = false;
+function kick() { if (!running) { running = true; last = performance.now(); requestAnimationFrame(tick); } }
+function tick(now) {
+  const dt = Math.min((now - last) / 1000, 1 / 30);
+  last = now;
+  let moving = false;
+  for (const key in spring) {
+    const s = spring[key], [k, c] = K[key];
+    const a = -k * (s.x - s.t) - c * s.v;
+    s.v += a * dt;
+    s.x += s.v * dt;
+    if (Math.abs(s.v) > .002 || Math.abs(s.x - s.t) > .002) moving = true;
+    else { s.x = s.t; s.v = 0; }
+    const unit = key === 'dx' || key === 'dy' ? 'px' : key === 'rx' || key === 'ry' ? 'deg' : '';
+    sticker.style.setProperty('--' + key, s.x.toFixed(3) + unit);
+  }
+  if (moving) requestAnimationFrame(tick); else running = false;
+}
+
+let drag = null, moved = false;
+wrap.addEventListener('pointermove', (e) => {
+  const r = wrap.getBoundingClientRect();
+  const nx = (e.clientX - r.left) / r.width - .5, ny = (e.clientY - r.top) / r.height - .5;
+  if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.hypot(dx, dy) > 4) moved = true;
+    spring.dx.t = dx;
+    spring.dy.t = dy;
+    spring.ry.t = Math.max(-22, Math.min(22, dx * .1));
+    spring.rx.t = Math.max(-22, Math.min(22, -dy * .1));
+  } else {
+    spring.ry.t = nx * 22;
+    spring.rx.t = -ny * 22;
+    spring.glare.t = .9;
+    sticker.style.setProperty('--gx', (nx + .5) * 100 + '%');
+    sticker.style.setProperty('--gy', (ny + .5) * 100 + '%');
+  }
+  kick();
+});
+wrap.addEventListener('pointerleave', () => {
+  if (drag) return;
+  spring.rx.t = spring.ry.t = spring.glare.t = 0;
+  kick();
+});
+sticker.addEventListener('pointerdown', (e) => {
+  drag = { x: e.clientX, y: e.clientY };
+  moved = false;
+  sticker.setPointerCapture(e.pointerId);
+  sticker.classList.add('dragging');
+  spring.sx.t = 1.05;
+  spring.sy.t = .92;
+  kick();
+});
+function release() {
+  if (!drag) return;
+  drag = null;
+  sticker.classList.remove('dragging');
+  spring.dx.t = spring.dy.t = spring.rx.t = spring.ry.t = 0;
+  spring.sx.t = spring.sy.t = 1;
+  spring.sy.v = 3.2;
+  spring.sx.v = -2.4;
+  kick();
+}
+sticker.addEventListener('pointerup', release);
+sticker.addEventListener('pointercancel', release);
+
+let pokeCount = 0, pokeTimer, backTimer;
+sticker.addEventListener('click', () => {
+  if (moved) return;
+  const id = POKES[Math.min(pokeCount, POKES.length - 1)];
+  pokeCount += 1;
+  clearTimeout(pokeTimer);
+  pokeTimer = setTimeout(() => { pokeCount = 0; }, 1600);
+  trigger(id, { transient: true });
+  clearTimeout(backTimer);
+  backTimer = setTimeout(() => trigger(baseEvent), 1800);
+});
+
+/* 向日葵开关 */
+const sw = $('sw'), swState = $('swState');
+let connectTimer;
+sw.addEventListener('click', () => {
+  clearTimeout(connectTimer);
+  clearTimeout(backTimer);
+  linked = !linked;
+  sw.setAttribute('aria-checked', String(linked));
+  if (linked) {
+    sw.classList.add('busy');
+    swState.textContent = '连接中…';
+    trigger('wait', { transient: true });
+    connectTimer = setTimeout(() => {
+      sw.classList.remove('busy');
+      swState.textContent = '已连接';
+      trigger('link');
+      backTimer = setTimeout(() => trigger('read'), 1800);
+    }, 620);
+  } else {
+    sw.classList.remove('busy');
+    swState.textContent = '未连接';
+    trigger('peek');
+  }
+});
+
+/* 面板 */
+for (const id in EVENTS) {
+  const b = document.createElement('button');
+  b.className = 'ev';
+  b.dataset.id = id;
+  b.textContent = EVENTS[id].label;
+  b.addEventListener('click', () => { clearTimeout(backTimer); trigger(id); });
+  $('events').appendChild(b);
+}
+for (let r = 1; r <= 4; r++) {
+  for (let c = 1; c <= 6; c++) {
+    const name = `r${r}c${c}`;
+    const b = document.createElement('button');
+    b.className = 'thumb';
+    b.dataset.name = name;
+    b.setAttribute('aria-label', `表情 ${(r - 1) * 6 + c}`);
+    const img = new Image();
+    let retries = 0;
+    img.onerror = () => { if (retries++ < 5) setTimeout(() => { img.src = `stickers/${name}.png?r=${retries}`; }, 250 * retries); };
+    img.src = `stickers/${name}.png`;
+    img.alt = '';
+    b.appendChild(img);
+    b.addEventListener('click', () => setImage(name));
+    $('sheet').appendChild(b);
+  }
+}
+trigger('peek');
+</script>
+</body>
+</html>

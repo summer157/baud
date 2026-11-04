@@ -1,0 +1,9 @@
+.DS_Store
+.build/
+Baud.app/
+promo/video/
+promo/export/build/
+windows/node_modules/
+windows/dist/
+windows/src-tauri/target/
+windows/src-tauri/gen/
