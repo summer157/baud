@@ -86,7 +86,7 @@ PORTRAIT_CSS = COMMON_CSS + """
 #legal { font-size: 30px; line-height: 1.5; }
 """
 
-LEGAL = """<div id="legal">画面是照着 app 搭的动画演示 · 看板娘贴纸版权归原作者（ai-girl-stickers），仅作非商业展示 · Baud 是个人作品，与 Anthropic 没有官方关系</div>"""
+LEGAL = """<div id="legal">画面是照着 app 搭的动画演示 · 看板娘贴纸来源：《Claude娘二十四格日常反应表情包》</div>"""
 
 
 def build(name, css, portrait):
