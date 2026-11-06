@@ -29,8 +29,6 @@ open Baud.app
 
 Windows 版使用 Tauri 2、Rust、Node.js 和 pnpm。开发与构建步骤见 [Windows 说明](windows/README.md)。
 
-Windows 版的真实硬件兼容性与最小化后的定时精度仍需在设备上验证，详见 [Windows 实测清单](windows/README.md#windows-实测清单)。
-
 ## 贴图来源
 
-看板娘贴纸裁切自[《Claude娘二十四格日常反应表情包》](https://xn--pssy23gqgbz2d718b.com/works/claude202610270005.html)，由 [蓝色大肥鱼（ai-girl-stickers）](https://github.com/lmy414/ai-girl-stickers)收录。贴图版权归原作者；本项目公开发布已由项目作者与贴图作者确认并注明来源。其他用途请向权利人确认。Baud 为个人作品，与 Anthropic 没有官方关系。
+看板娘贴纸来源：[《Claude娘二十四格日常反应表情包》](https://xn--pssy23gqgbz2d718b.com/works/claude202610270005.html)。

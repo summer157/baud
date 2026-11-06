@@ -24,7 +24,7 @@ BAUD_SELFTEST=/tmp/report.txt src-tauri/target/debug/bundle/macos/Baud.app/Conte
 推送到 GitHub 后由 `.github/workflows/windows.yml` 自动构建，在 Actions 页面下载 `Baud-Windows`。
 里面有安装包（`Baud_x.y.z_x64-setup.exe`）和免安装的 `baud.exe`。没有代码签名，首次运行时要点“更多信息 → 仍要运行”。
 
-## Windows 实测清单
+## Windows 测试清单
 
 1. 安装并打开：窗口、字体、贴纸、动画。左上角切换外观（跟随系统、浅色、深色）：内容和标题栏都要变，重开后还记得。
 2. 演示设备：连接、发送、模拟拔出和插回、高速数据时界面是否流畅。
@@ -43,7 +43,7 @@ BAUD_SELFTEST=/tmp/report.txt src-tauri/target/debug/bundle/macos/Baud.app/Conte
 ## 最小化后的定时发送
 
 当前版本的 Tauri 和 wry 在 Windows 上不支持 `backgroundThrottling` 配置，写了也不起作用，而定时和循环发送都靠网页的定时器。
-窗口最小化后是否还准确没有实测过，要在设备这一头测：
+可按以下步骤检查窗口最小化后的定时精度：
 
 1. 让设备（或另一台电脑上的串口工具）记录每条数据到达的时间，发送和接收都用 115200 以上的波特率，保证 100ms 内能发完一条。
 2. 在 Baud 里连接设备，输入一条短内容，定时设为 100ms，开启定时发送。
@@ -56,4 +56,4 @@ BAUD_SELFTEST=/tmp/report.txt src-tauri/target/debug/bundle/macos/Baud.app/Conte
 
 ## 贴纸来源
 
-看板娘贴纸版权归原作者，来源和说明见 [贴图来源](../design/source/CREDITS.md)。
+看板娘贴纸来源：[《Claude娘二十四格日常反应表情包》](https://xn--pssy23gqgbz2d718b.com/works/claude202610270005.html)。
