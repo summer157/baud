@@ -182,6 +182,8 @@ impl Session {
                             return;
                         }
                         match writer.write(&data[sent..]) {
+                            // Windows 上写超时不报错，只是写进去 0 字节
+                            Ok(0) => std::thread::sleep(Duration::from_millis(1)),
                             Ok(n) => sent += n,
                             // 流控卡住时会一直超时，这里循环等待，同时能响应关闭
                             Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted) => {}
@@ -195,7 +197,8 @@ impl Session {
                             }
                         }
                     }
-                    let _ = writer.flush();
+                    // 这里不能调用 flush：Windows 的 FlushFileBuffers 不受写超时约束，
+                    // 流控不放行时会一直等，关闭和重连也就跟着卡住。写入已经交给了驱动，不需要它。
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if write_stop.load(Ordering::Relaxed) {
@@ -232,6 +235,10 @@ impl Drop for Session {
         self.outgoing = None;
         for thread in self.threads.drain(..) {
             let _ = thread.join();
+        }
+        // 丢掉驱动里没发完的数据，否则流控卡住时关闭句柄也可能等待
+        if let Ok(port) = self.control.lock() {
+            let _ = port.clear(serialport::ClearBuffer::Output);
         }
     }
 }
@@ -278,6 +285,91 @@ pub fn list_ports() -> Vec<PortEntry> {
         (rank(a.kind), number(&a.name), &a.name).cmp(&(rank(b.kind), number(&b.name), &b.name))
     });
     ports
+}
+
+#[cfg(test)]
+mod fake_port_tests {
+    use super::*;
+    use crate::fake_port::FakePort;
+    use std::sync::mpsc::channel;
+
+    fn config() -> Config {
+        Config { baud: 115200, data_bits: 8, stop_bits: 1, parity: "none".into(), flow: "rtsCts".into() }
+    }
+
+    fn start(port: &FakePort) -> Session {
+        Session::start(Box::new(port.clone()), &config(), |_| {}, || {}).unwrap()
+    }
+
+    #[test]
+    fn 发送原样到达且不调用flush() {
+        let port = FakePort::new();
+        let session = start(&port);
+        let frames: Vec<Vec<u8>> = (0..50u8).map(|i| vec![i, 0xFF, 0x00, i]).collect();
+        let started = Instant::now();
+        for frame in &frames {
+            session.write(frame.clone());
+        }
+        let expected: Vec<u8> = frames.concat();
+        assert_eq!(port.wait_written(expected.len()), expected, "字节和顺序都不能变");
+        assert!(started.elapsed() < Duration::from_secs(1), "发送不及时：{:?}", started.elapsed());
+        assert_eq!(port.flush_count(), 0, "每帧 flush 在流控卡住时无法中止");
+    }
+
+    #[test]
+    fn 流控卡住时发送不丢_放行后继续发完() {
+        let port = FakePort::new();
+        port.set_blocked(true);
+        let session = start(&port);
+        session.write(b"first".to_vec());
+        session.write(b"second".to_vec());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(port.written().is_empty());
+        port.set_blocked(false);
+        assert_eq!(port.wait_written(11), b"firstsecond");
+    }
+
+    #[test]
+    fn 流控卡住时关闭不会一直等() {
+        let port = FakePort::new();
+        port.set_blocked(true);
+        let session = start(&port);
+        session.write(vec![0x55; 4096]);
+        session.write(vec![0xAA; 4096]);
+        std::thread::sleep(Duration::from_millis(60));
+
+        let (done, closed) = channel();
+        let closing = Instant::now();
+        std::thread::spawn(move || {
+            drop(session);
+            done.send(()).unwrap();
+        });
+        // 这个假串口的 flush 要等到放行才返回，如果还有 flush，这里就会超时
+        closed.recv_timeout(Duration::from_secs(1)).expect("流控卡住时关闭被挡住了");
+        println!("关闭用时 {:?}", closing.elapsed());
+        assert!(port.wait_closed(), "所有句柄都要关掉");
+        assert_eq!(port.clear_count(), 1, "要丢弃驱动里没发完的数据");
+    }
+
+    #[test]
+    fn 收到的字节原样交出_拔出时通知一次_主动关闭不误报() {
+        let port = FakePort::new();
+        let (data_tx, data_rx) = channel();
+        let (lost_tx, lost_rx) = channel();
+        let session = Session::start(Box::new(port.clone()), &config(), move |d| data_tx.send(d).unwrap(), move || lost_tx.send(()).unwrap()).unwrap();
+        port.feed(&[0x00, 0xFF, 0x41]);
+        assert_eq!(data_rx.recv_timeout(Duration::from_secs(2)).unwrap(), vec![0x00, 0xFF, 0x41]);
+        port.unplug();
+        lost_rx.recv_timeout(Duration::from_secs(2)).expect("拔出后应当通知");
+        assert!(lost_rx.recv_timeout(Duration::from_millis(100)).is_err(), "只通知一次");
+        drop(session);
+
+        let quiet = FakePort::new();
+        let (lost_tx, lost_rx) = channel();
+        let session = Session::start(Box::new(quiet.clone()), &config(), |_| {}, move || lost_tx.send(()).unwrap()).unwrap();
+        drop(session);
+        assert!(lost_rx.recv_timeout(Duration::from_millis(100)).is_err(), "主动关闭不能误报");
+    }
 }
 
 #[cfg(all(test, unix))]

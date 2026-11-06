@@ -76,6 +76,13 @@ enum SelfTest {
 
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         await wait(1)
+        // 只跑连接相关的检查，不用等完整的自检
+        if ProcessInfo.processInfo.environment["BAUD_SELFTEST_ONLY"] == "connection" {
+            await ConnectionChecks.run(model, check)
+            print(failures == 0 ? "自检全部通过" : "自检有 \(failures) 项失败")
+            fflush(stdout)
+            exit(failures == 0 ? 0 : 1)
+        }
         model.selectedPort = DemoDevice.portID
         await wait(0.3)
         shot("01-idle")
@@ -916,6 +923,8 @@ enum SelfTest {
 
         model.toggleLink()
         await wait(0.8)
+
+        await ConnectionChecks.run(model, check)
 
         model.clearLog()
         await wait(0.2)

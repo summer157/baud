@@ -6,6 +6,51 @@ import UniformTypeIdentifiers
 
 enum LinkState { case idle, connecting, connected, lost }
 
+/// 一次打开尝试。打开在后台进行，打开的结果归谁处理由这里决定：
+/// 要么被主线程接手，要么被取消，取消的一方负责关掉，不会两边都处理，也不会没人处理。
+private final class OpenAttempt: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var port: SerialPort?
+    private var device: DemoDevice?
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    /// 后台打开成功后交回来。已经被取消时返回 false，由后台自己关掉。
+    func store(_ port: SerialPort, device: DemoDevice?) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cancelled else { return false }
+        self.port = port
+        self.device = device
+        return true
+    }
+
+    /// 主线程接手。之后取消不会再关掉它们。
+    func take() -> (SerialPort, DemoDevice?)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let port else { return nil }
+        defer {
+            self.port = nil
+            device = nil
+        }
+        return (port, device)
+    }
+
+    /// 取消，返回已经打开、需要关掉的东西。
+    func cancel() -> (SerialPort, DemoDevice?)? {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+        return take()
+    }
+}
+
 /// 变化频繁的统计数据单独放，避免每次刷新都让整个界面重算。
 final class StatsModel: ObservableObject {
     @Published var rx = 0
@@ -55,7 +100,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         didSet {
             guard selectedPort != oldValue else { return }
             defaults.set(selectedPort, forKey: "port")
-            if link == .connected || link == .lost {
+            if link != .idle {
                 closeCurrent()
                 connect()
             }
@@ -156,6 +201,14 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private var queryWork: DispatchWorkItem?
     private var configWork: DispatchWorkItem?
     private var retryWork: DispatchWorkItem?
+    private var settleWork: DispatchWorkItem?
+    private var attempt: OpenAttempt?
+    /// 打开和关闭都排在这里。端口是独占的，要等上一个真正关掉才能再打开同一个。
+    private let connectQueue = DispatchQueue(label: "baud.connect", qos: .userInitiated)
+    /// 自检用：让打开变慢，模拟打开很慢的端口。
+    var slowOpenForSelfTest: TimeInterval = 0
+    /// 自检用：取出当前连接的接收回调，模拟串口队列已经拿到回调、连接随后被关掉的情况。
+    var receiveCallbackForSelfTest: (@Sendable (Data) -> Void)? { port?.onData }
     private var loading = true
 
     // 接收管线：在自己的队列上分行，定时批量交给主线程
@@ -166,6 +219,11 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private var pipeBytes = 0
     private var pipeLastData = Date.distantPast
     private var pipeInFlight = false
+    /// 收数据的连接身份。主线程在开始和结束一个连接时换号，换号也排在 pipe 队列里，
+    /// 所以这个值只在 pipe 队列上读写：排在换号之后到达的旧数据一定会被认出来。
+    private var pipeEpoch = 0
+    /// 主线程发出的最新身份，只在主线程上用。
+    private var lastEpoch = 0
 
     private var secondTimer: Timer?
     private var lastRxTotal = 0
@@ -263,22 +321,26 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         d.set(flow.rawValue, forKey: "flow")
 
         configWork?.cancel()
-        guard link == .connected else { return }
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, let port = self.port else { return }
-            let config = self.config
-            port.update(config: config) { [weak self] error in
-                DispatchQueue.main.async {
-                    if let error {
-                        self?.note("无法应用新参数：\(error.localizedDescription)", severity: .error)
-                    } else {
-                        self?.note("已切换为 \(config.summary)")
-                    }
+        // 还在打开时不用管，打开后会检查一次；没有连接时，下次连接自然用新参数
+        guard port != nil else { return }
+        let work = DispatchWorkItem { [weak self] in self?.applyConfig() }
+        configWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func applyConfig() {
+        guard let port else { return }
+        let config = config
+        port.update(config: config) { [weak self, weak port] error in
+            DispatchQueue.main.async {
+                guard let self, let port, self.port === port else { return }
+                if let error {
+                    self.note("无法应用新参数：\(error.localizedDescription)", severity: .error)
+                } else {
+                    self.note("已切换为 \(config.summary)")
                 }
             }
         }
-        configWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     // MARK: 端口列表
@@ -302,13 +364,10 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             }
         }
 
-        switch link {
-        case .connected where selected == nil:
+        if selected == nil, link == .connected || port != nil {
             deviceLost()
-        case .lost where selected != nil:
+        } else if selected != nil, link == .lost {
             scheduleReconnect(after: 0.4)
-        default:
-            break
         }
     }
 
@@ -349,17 +408,23 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
     private func connect(note: String? = nil) {
         guard !selectedPort.isEmpty else { return }
+        if attempt != nil || port != nil { closeCurrent() }
         generation += 1
-        let token = generation
         let target = selectedPort
         let config = config
         let wasLost = link == .lost
         let started = Date()
+        let delay = slowOpenForSelfTest
+        let opening = OpenAttempt()
+        attempt = opening
         if !wasLost { link = .connecting }
         lastError = nil
         updateMood()
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        connectQueue.async { [weak self] in
+            // 排队期间已经被取消，就不用打开了
+            guard !opening.isCancelled else { return }
+            if delay > 0 { Thread.sleep(forTimeInterval: delay) }
             var device: DemoDevice?
             var path = target
             if target == DemoDevice.portID {
@@ -367,40 +432,56 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                 path = device?.path ?? "/dev/null"
             }
             let outcome = Result { try SerialPort(path: path, config: config) }
-            // 留一点时间，让开关转圈的动画能被看见
-            let delay = max(0, 0.42 - Date().timeIntervalSince(started))
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard let self, token == self.generation else {
-                    if case let .success(port) = outcome { port.close() }
+            switch outcome {
+            case let .success(port):
+                guard opening.store(port, device: device) else {
+                    port.closeAndWait()
                     device?.stop()
                     return
                 }
+            case .failure:
+                device?.stop()
+            }
+            DispatchQueue.main.async {
+                guard let self, self.attempt === opening else { return }
                 switch outcome {
-                case let .success(port):
-                    self.didOpen(port, device: device, note: note)
+                case .success:
+                    guard let (port, device) = opening.take() else { return }
+                    self.attempt = nil
+                    self.didOpen(port, device: device, opened: config, note: note)
+                    self.settle(since: started) { self.showConnected() }
                 case let .failure(error):
-                    device?.stop()
-                    self.didFail(error, wasLost: wasLost)
+                    self.settle(since: started) {
+                        self.attempt = nil
+                        self.didFail(error, wasLost: wasLost)
+                    }
                 }
             }
         }
     }
 
-    private func didOpen(_ opened: SerialPort, device: DemoDevice?, note text: String?) {
+    /// 留一点时间，让开关转圈的动画能被看见。串口的工作不等它。
+    private func settle(since started: Date, _ action: @escaping () -> Void) {
+        let work = DispatchWorkItem(block: action)
+        settleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, 0.42 - Date().timeIntervalSince(started)), execute: work)
+    }
+
+    /// 串口已经打开：从这一刻起它就是当前连接，能收数据、能发现断线。开关的动画之后才结束。
+    private func didOpen(_ opened: SerialPort, device: DemoDevice?, opened openedConfig: SerialConfig, note text: String?) {
         port = opened
         demo = device
         failCount = 0
         lastError = nil
         connectedAt = Date()
         lastRxAt = .distantPast
-        pipe.async { [self] in
-            assembler = LineAssembler()
-            pipeLines.removeAll()
-            pipeBytes = 0
-        }
+        let epoch = nextEpoch(endingLine: false)
         opened.onData = { [weak self] data in
             guard let self else { return }
-            self.pipe.async { self.receive(data) }
+            // 串口队列可能已经拿到了这个回调，清空 onData 挡不住它，所以到 pipe 队列上再认一次身份
+            self.pipe.async {
+                if self.pipeEpoch == epoch { self.receive(data) }
+            }
         }
         opened.onDisconnect = { [weak self, weak opened] in
             DispatchQueue.main.async {
@@ -408,13 +489,33 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                 self.deviceLost()
             }
         }
+        note((text ?? "已连接") + " \(selectedName) · \(openedConfig.summary)")
+        // 打开期间参数又改过了
+        if config != openedConfig { applyConfig() }
         opened.start()
         device?.start()
+    }
 
+    private func showConnected() {
         link = .connected
-        note((text ?? "已连接") + " \(selectedName) · \(config.summary)")
+        lastError = nil
         Haptics.bump()
         mood.flash(.link, for: 1.8)
+    }
+
+    /// 换一个连接身份。结束连接时把没收完的半行收尾，它不能和新连接的内容接在一起。
+    private func nextEpoch(endingLine: Bool) -> Int {
+        lastEpoch += 1
+        let epoch = lastEpoch
+        pipe.async { [self] in
+            pipeEpoch = epoch
+            guard endingLine else { return }
+            if let rest = assembler.flush() {
+                pipeLines.append(LogEntry(.rx, bytes: rest))
+            }
+            assembler = LineAssembler()
+        }
+        return epoch
     }
 
     private func didFail(_ error: Error, wasLost: Bool) {
@@ -445,7 +546,9 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private func scheduleReconnect(after delay: TimeInterval) {
         retryWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.link == .lost, self.ports.contains(where: { $0.id == self.selectedPort }) else { return }
+            // 有一次尝试正在进行时不打断它，失败后会再安排
+            guard let self, self.link == .lost, self.attempt == nil, self.port == nil,
+                  self.ports.contains(where: { $0.id == self.selectedPort }) else { return }
             self.connect(note: "已自动重连")
         }
         retryWork = work
@@ -455,9 +558,21 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private func closeCurrent() {
         stopTimer()
         multi.stop()
-        port?.onData = nil
-        port?.onDisconnect = nil
-        port?.close()
+        settleWork?.cancel()
+        settleWork = nil
+        configWork?.cancel()
+        configWork = nil
+        if let (opening, openingDevice) = attempt?.cancel() {
+            connectQueue.async { opening.closeAndWait() }
+            openingDevice?.stop()
+        }
+        attempt = nil
+        if let closing = port {
+            // 回调不用清空：串口队列正在读它们，这里写就是数据竞争。迟到的数据由 pipe 队列的身份挡住，
+            // 迟到的断开由下面的 port 为 nil 挡住
+            connectQueue.async { closing.closeAndWait() }
+            _ = nextEpoch(endingLine: true)
+        }
         port = nil
         demo?.stop()
         demo = nil

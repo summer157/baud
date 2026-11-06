@@ -45,9 +45,11 @@ public enum SerialError: LocalizedError {
 public final class SerialPort: @unchecked Sendable {
     public let path: String
 
-    /// 收到数据。
+    // 两个回调都在调用 start() 之前设好，之后不要再改：内部队列会读它们，改动没有同步。
+
+    /// 收到数据。关闭之后，已经在路上的一次调用仍可能发生，调用方要能认出它。
     public var onData: (@Sendable (Data) -> Void)?
-    /// 设备消失（拔出或读到文件结束）。主动调用 close() 不会触发。
+    /// 设备消失（拔出或读到文件结束）。主动调用 close() 不会触发，但同样可能迟到。
     public var onDisconnect: (@Sendable () -> Void)?
 
     private let queue = DispatchQueue(label: "baud.serial.io", qos: .userInitiated)
@@ -76,12 +78,13 @@ public final class SerialPort: @unchecked Sendable {
             Darwin.close(fd)
             throw error
         }
+        // 只丢弃打开之前的残留。打开之后到 start 之间收到的内容留在系统缓冲区里，start 后会读到
+        tcflush(fd, TCIOFLUSH)
     }
 
     /// 开始接收。先设好回调再调用。
     public func start() {
         queue.async { [self] in
-            tcflush(fd, TCIOFLUSH)
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
             source.setEventHandler { [weak self] in self?.drainInput() }
             source.resume()
@@ -115,6 +118,11 @@ public final class SerialPort: @unchecked Sendable {
 
     public func close() {
         queue.async { [self] in teardown() }
+    }
+
+    /// 关闭并等到真正关掉。端口是独占的，紧接着重新打开同一个端口时要用它。不能在回调里调用。
+    public func closeAndWait() {
+        queue.sync { teardown() }
     }
 
     private func teardown() {

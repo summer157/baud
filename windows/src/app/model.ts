@@ -172,6 +172,11 @@ export class AppModel {
   private queryWork: ReturnType<typeof setTimeout> | null = null;
   private configWork: ReturnType<typeof setTimeout> | null = null;
   private retryWork: ReturnType<typeof setTimeout> | null = null;
+  /** 打开已经有结果，等连接动画走完再告诉界面。 */
+  private settleWork: ReturnType<typeof setTimeout> | null = null;
+  /** 当前连接已经打开。比界面显示“已连接”早一点，这段时间串口已经在工作。 */
+  private attached = false;
+  private portsKnown = false;
 
   // 接收管线：先分行，定时批量交给日志
   private assembler = new LineAssembler();
@@ -213,8 +218,12 @@ export class AppModel {
 
     this.log.configure({ view: this.state.viewMode, encoding: this.state.encoding });
     this.log.setShowTime(this.state.showTime);
-    this.portsChanged([]);
-    void listPorts().then((ports) => this.portsChanged(ports));
+    // 真实的端口列表回来之前不做选择，否则保存的端口会被当成不存在。没有保存过时先选演示设备，马上就能用
+    if (!this.state.selectedPort) this.state.selectedPort = DEMO_INFO.path;
+    void listPorts().then(
+      (ports) => this.portsChanged(ports),
+      () => this.portsChanged([]),
+    );
     watchPorts((ports) => this.portsChanged(ports));
 
     setInterval(() => this.pipeTick(), 33);
@@ -253,7 +262,7 @@ export class AppModel {
     }
     if (changed("timerMs") && this.state.timerOn) this.startTimer();
     if (CONFIG_KEYS.some((k) => changed(k as keyof AppState))) this.configChanged();
-    if (changed("selectedPort") && (this.state.link === "connected" || this.state.link === "lost")) {
+    if (changed("selectedPort") && this.state.link !== "idle") {
       this.closeCurrent();
       this.connect();
     }
@@ -269,8 +278,7 @@ export class AppModel {
   }
 
   get configSummary(): string {
-    const c = this.config;
-    return `${c.baud} ${c.dataBits}${c.parity === "none" ? "N" : c.parity === "even" ? "E" : "O"}${c.stopBits}`;
+    return summaryOf(this.config);
   }
 
   get isDemoSelected(): boolean {
@@ -299,20 +307,30 @@ export class AppModel {
 
   private configChanged() {
     if (this.configWork !== null) clearTimeout(this.configWork);
-    if (this.state.link !== "connected") return;
-    this.configWork = setTimeout(() => {
-      const config = this.config;
-      this.transport?.update(config).then(
-        () => this.note(`已切换为 ${this.configSummary}`),
-        (error) => this.note(`无法应用新参数：${String(error)}`, true),
-      );
-    }, 400);
+    // 还在打开时不用管，打开后会检查一次；没有连接时，下次连接自然用新参数
+    if (this.state.link !== "connected" && !this.attached) return;
+    this.configWork = setTimeout(() => this.applyConfig(), 400);
+  }
+
+  private applyConfig() {
+    const transport = this.transport;
+    if (!transport) return;
+    const summary = this.configSummary;
+    transport.update(this.config).then(
+      () => {
+        if (this.transport === transport) this.note(`已切换为 ${summary}`);
+      },
+      (error) => {
+        if (this.transport === transport) this.note(`无法应用新参数：${String(error)}`, true);
+      },
+    );
   }
 
   // MARK: 端口列表
 
   private portsChanged(found: PortInfo[]) {
     this.systemPorts = found;
+    this.portsKnown = true;
     const list = [...found];
     if (this.state.demoPlugged) {
       const index = list.findIndex((p) => p.kind === "system");
@@ -333,7 +351,7 @@ export class AppModel {
     }
     this.set(patch);
 
-    if (link === "connected" && !selected) this.deviceLost();
+    if ((link === "connected" || this.attached) && !selected) this.deviceLost();
     else if (link === "lost" && selected) this.scheduleReconnect(400);
   }
 
@@ -351,14 +369,20 @@ export class AppModel {
     this.closeCurrent();
     this.failCount = 0;
     this.set({ link: "idle", lastError: null, demoPlugged: true });
-    this.portsChanged(this.systemPorts);
+    this.refreshPorts();
     if (wasConnected) this.note(`已断开 ${name}`);
     this.updateMood();
+  }
+
+  /** 端口列表还没回来时不要重新选择，保存的端口还没被确认。 */
+  private refreshPorts() {
+    if (this.portsKnown) this.portsChanged(this.systemPorts);
   }
 
   private connect(noteText?: string) {
     const { selectedPort, link } = this.state;
     if (!selectedPort) return;
+    if (this.transport) this.closeCurrent();
     this.generation += 1;
     const token = this.generation;
     const wasLost = link === "lost";
@@ -367,46 +391,64 @@ export class AppModel {
     if (!wasLost) this.set({ link: "connecting" });
     this.set({ lastError: null });
     this.updateMood();
+    this.startNewLine();
 
-    let opened: Transport | null = null;
-    const isCurrent = () => token === this.generation && (opened === null || this.transport === opened);
-    openPort(selectedPort, config, {
+    // 编号决定数据是否有效，和动画无关：打开返回之前到达的数据也要留下
+    const transport: Transport = openPort(selectedPort, config, {
       onData: (data) => {
-        if (isCurrent()) this.receive(data);
+        if (token === this.generation) this.receive(data);
       },
       onLost: () => {
-        if (isCurrent()) this.deviceLost();
+        if (token === this.generation && this.transport === transport) this.deviceLost();
       },
-    }).then(
-      async (transport) => {
-        opened = transport;
-        // 留一点时间，让开关转圈的动画能被看见
-        await new Promise((r) => setTimeout(r, Math.max(0, 420 - (performance.now() - started))));
-        if (token !== this.generation) {
-          transport.close();
-          return;
-        }
-        this.didOpen(transport, noteText);
+    });
+    this.transport = transport;
+    // 留一点时间，让开关转圈的动画能被看见
+    const settle = (action: () => void) => {
+      this.settleWork = setTimeout(() => {
+        this.settleWork = null;
+        action();
+      }, Math.max(0, 420 - (performance.now() - started)));
+    };
+    const isCurrent = () => token === this.generation && this.transport === transport;
+    transport.opened.then(
+      () => {
+        if (!isCurrent()) return;
+        this.didOpen(transport, config, noteText);
+        settle(() => this.showConnected());
       },
-      async (error: Error) => {
-        await new Promise((r) => setTimeout(r, Math.max(0, 420 - (performance.now() - started))));
-        if (token === this.generation) this.didFail(error.message, wasLost);
+      (error: Error) => {
+        if (!isCurrent()) return;
+        settle(() => {
+          this.transport = null;
+          this.didFail(error.message, wasLost);
+        });
       },
     );
   }
 
-  private didOpen(opened: Transport, text?: string) {
-    this.transport = opened;
+  /** 串口已经打开：从这一刻起它就是当前连接，能收数据、能发现断线。开关的动画之后才结束。 */
+  private didOpen(opened: Transport, config: SerialConfig, text?: string) {
+    this.attached = true;
     this.failCount = 0;
     this.connectedAt = performance.now();
     this.lastRxAt = 0;
-    this.assembler = new LineAssembler();
-    this.pipeLines = [];
-    this.pipeBytes = 0;
+    this.note(`${text ?? "已连接"} ${this.selectedName} · ${summaryOf(config)}`);
+    // 打开期间参数又改过了
+    if (!sameConfig(config, this.config)) this.applyConfig();
     opened.demo?.start();
+  }
+
+  private showConnected() {
     this.set({ link: "connected", lastError: null });
-    this.note(`${text ?? "已连接"} ${this.selectedName} · ${this.configSummary}`);
     this.mood.flash("link", 1.8);
+  }
+
+  /** 上一个连接没收完的半行不能和新连接的内容接在一起。 */
+  private startNewLine() {
+    const rest = this.assembler.flush();
+    if (rest) this.pipeLines.push(rowEntry("rx", rest));
+    this.assembler = new LineAssembler();
   }
 
   private didFail(message: string, wasLost: boolean) {
@@ -433,13 +475,19 @@ export class AppModel {
     if (this.retryWork !== null) clearTimeout(this.retryWork);
     this.retryWork = setTimeout(() => {
       const { link, ports, selectedPort } = this.state;
-      if (link === "lost" && ports.some((p) => p.path === selectedPort)) this.connect("已自动重连");
+      // 有一次尝试正在进行时不打断它，失败后会再安排
+      if (link === "lost" && !this.transport && ports.some((p) => p.path === selectedPort)) this.connect("已自动重连");
     }, delay);
   }
 
   private closeCurrent() {
     this.stopTimer();
     this.multi.stop();
+    if (this.settleWork !== null) clearTimeout(this.settleWork);
+    this.settleWork = null;
+    if (this.configWork !== null) clearTimeout(this.configWork);
+    this.configWork = null;
+    this.attached = false;
     this.transport?.close();
     this.transport = null;
     if (this.state.flooding) this.set({ flooding: false });
@@ -456,7 +504,7 @@ export class AppModel {
 
   demoPlugBack() {
     this.set({ demoPlugged: true });
-    this.portsChanged(this.systemPorts);
+    this.refreshPorts();
   }
 
   demoToggleFlood() {
@@ -681,6 +729,14 @@ export class AppModel {
       }
     }
   }
+}
+
+function summaryOf(c: SerialConfig): string {
+  return `${c.baud} ${c.dataBits}${c.parity === "none" ? "N" : c.parity === "even" ? "E" : "O"}${c.stopBits}`;
+}
+
+function sameConfig(a: SerialConfig, b: SerialConfig): boolean {
+  return a.baud === b.baud && a.dataBits === b.dataBits && a.stopBits === b.stopBits && a.parity === b.parity && a.flow === b.flow;
 }
 
 function problemText(problem: SendProblem): string {

@@ -103,7 +103,11 @@ let received = Box(Data())
 let disconnected = Box(false)
 var config = SerialConfig()
 let port = try SerialPort(path: device.path, config: config)
-port.onData = { data in received.mutate { $0.append(data) } }
+let counted = Box(0)
+port.onData = { data in
+    received.mutate { $0.append(data) }
+    counted.mutate { $0 += data.count }
+}
 port.onDisconnect = { disconnected.value = true }
 port.start()
 device.start()
@@ -128,8 +132,7 @@ port.update(config: config) { _ in }
 
 print("高速数据（1 MB/s，持续 2 秒）")
 received.value = Data()
-let counted = Box(0)
-port.onData = { data in counted.mutate { $0 += data.count } }
+counted.value = 0
 device.setFlood(bytesPerSecond: 1_000_000)
 RunLoop.current.run(until: Date().addingTimeInterval(2))
 device.setFlood(bytesPerSecond: 0)
@@ -151,6 +154,46 @@ if let second = DemoDevice() {
     second.stop()
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     check(!flagged.value, "主动关闭没有误报")
+}
+
+print("打开之后、开始接收之前的数据")
+if let virtual = VirtualPort() {
+    let early = Box(Data())
+    let holder = try SerialPort(path: virtual.path, config: SerialConfig())
+    holder.onData = { data in early.mutate { $0.append(data) } }
+    // 模拟连接时会马上打印启动信息的设备：还没开始接收，数据就已经来了
+    virtual.send("boot: early banner\r\n")
+    RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    holder.start()
+    let bootText = "boot: early banner\r\n"
+    check(wait { early.value.count >= bootText.utf8.count }, "start 之前到达的数据没有被清掉")
+    virtual.send("later\r\n")
+    check(wait { String(decoding: early.value, as: UTF8.self) == bootText + "later\r\n" }, "前后的数据都完整，顺序不变，共 \(early.value.count) 字节")
+
+    holder.write(Data([0x00, 0xFF, 0x41]))
+    var echoed = Data()
+    _ = wait {
+        echoed.append(virtual.receive())
+        return echoed.count >= 3
+    }
+    check(echoed == Data([0x00, 0xFF, 0x41]), "发送的字节原样到达设备")
+
+    print("关闭")
+    check(!virtual.isReleasedByApp, "打开时设备这头能看到串口还开着")
+    holder.closeAndWait()
+    check(virtual.isReleasedByApp, "closeAndWait 返回时串口已经真的关掉")
+    holder.closeAndWait()
+    holder.close()
+    check(true, "重复关闭没事")
+    do {
+        let again = try SerialPort(path: virtual.path, config: SerialConfig())
+        check(true, "关掉后能马上重新打开")
+        again.closeAndWait()
+    } catch {
+        check(false, "关掉后能马上重新打开：\(error.localizedDescription)")
+    }
+} else {
+    check(false, "无法创建虚拟串口")
 }
 
 print("打开失败的提示")
